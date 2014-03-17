@@ -25,19 +25,20 @@ public class WikiPipeline extends Configured implements Tool {
 	};
 
 	private static final String INPUT_OPTION = "input";
-	private static final String NUM_REDUCERS_OPTION = "num_reducers";
 	private static final String OUTPUT_OPTION = "output";
+	private static final String NUM_REDUCERS_OPTION = "num_reducers";
 	// File containing pairs of (redirect title, main title).
 	// Obtained using edu.cmu.lti.wikipedia_redirect.WikipediaRedirectExtractor .
 	// See https://code.google.com/p/wikipedia-redirect/ .
 	private static final String REDIRECT_MAPPING_OPTION = "redirect_map";
+	// Provide anchor text index file or it will be computed on the spot (computationally expensive).
 	private static final String ANCHOR_TEXT_INDEX_OPTION = "anchor_text";
 	private static final String TITLES_INDEX_OPTION = "titles";
 
 	private static final int DEFAULT_NUM_REDUCERS = 10;
 	private static final String DEFAULT_TITLES_INDEX_FILE = "/enwiki-titles.txt";
 	private static final String DEFAULT_REDIRECT_FILE = "/enwiki-redirect.txt";
-	private static final String DEFAULT_ANCHOR_TEXT_FILE = "mention_entity_index";
+	private static String DEFAULT_ANCHOR_TEXT_FILE = "mention_entity_index";
 
 	@SuppressWarnings("static-access")
 	@Override
@@ -77,7 +78,7 @@ public class WikiPipeline extends Configured implements Tool {
 		String tmp = "tmp-" + this.getClass().getCanonicalName() + "-" + random.nextInt(10000);
 
 		if (!cmdline.hasOption(ANCHOR_TEXT_INDEX_OPTION)) {
-				new ExtractEntityMentionPipeline()
+				new EntityMentionIndexBuilder()
 						.task1(
 								getConf(),
 								cmdline.getOptionValue(INPUT_OPTION), 
@@ -86,15 +87,15 @@ public class WikiPipeline extends Configured implements Tool {
 								cmdline.getOptionValue(REDIRECT_MAPPING_OPTION, DEFAULT_REDIRECT_FILE),
 								1
 						);
+				DEFAULT_ANCHOR_TEXT_FILE += "/" + EntityMentionIndexBuilder.MENTION_INDEX + "-r-00000";
 		}
 
-		new ExtractKeyphrasenessPipeline()
+		new KeyphrasenessIndexBuilder()
 				.task1(
 						getConf(),
 						cmdline.getOptionValue(INPUT_OPTION), 
 						cmdline.getOptionValue(OUTPUT_OPTION, tmp), 
-						cmdline.getOptionValue(ANCHOR_TEXT_INDEX_OPTION, DEFAULT_ANCHOR_TEXT_FILE) + 
-								"/" + ExtractEntityMentionPipeline.MENTION_INDEX + "-r-00000", 
+						cmdline.getOptionValue(ANCHOR_TEXT_INDEX_OPTION, DEFAULT_ANCHOR_TEXT_FILE),
 						num_reducers
 				);
 		return 0;

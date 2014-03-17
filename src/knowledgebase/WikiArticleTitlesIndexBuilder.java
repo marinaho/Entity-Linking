@@ -30,14 +30,22 @@ import org.apache.log4j.Logger;
 
 import edu.umd.cloud9.collection.wikipedia.WikipediaPage;
 
-public class ExtractWikiArticleTitles extends Configured implements Tool {
-	private static final Logger LOG = Logger.getLogger(ExtractWikiArticleTitles.class);
+/* 
+ * Pipeline that extracts a list of wikipedia article titles from wikipedia dump repacked in 
+ * sequence file format.
+ * 1. Run steps 1-2 & 5 from ExtractEntityMentionPipeline.
+ * 2. Run: 
+ * 			hadoop WikiPipeline.jar knowledgebase.ExtractWikiArticleTitles \
+ * 				-input enwiki-latest.block -output /enwiki-titles.txt 
+ */
+public class WikiArticleTitlesIndexBuilder extends Configured implements Tool {
+	private static final Logger LOG = Logger.getLogger(WikiArticleTitlesIndexBuilder.class);
 	
 	public static class Map extends MapReduceBase implements 
 			Mapper<IntWritable, WikipediaPage, Text, Text> {
 		Text outputValue = new Text();
 		
-		// Emit: key = article title, filter out redirects, disambiguation and empty pages.
+		// Emit: key = article title, filter out redirects, disambiguation, list and category pages.
 		public void map(IntWritable key, WikipediaPage p, 
 				OutputCollector<Text, Text> output, Reporter reporter) throws IOException {
 			if (p.isRedirect() || p.isDisambiguation() || WikiUtils.isCategoryPage(p.getTitle()) ||
@@ -51,13 +59,14 @@ public class ExtractWikiArticleTitles extends Configured implements Tool {
 	}
 	
 	
-	public void task(Configuration config, String inputPath, String outputPath) throws IOException {
-		LOG.info("Exracting article titles: filter out redirects, disambiguation, category and list "
+	public void task(Configuration config, String inputPath, String outputPath, int num_reducers) 
+			throws IOException {
+		LOG.info("Extracting article titles: filter out redirects, disambiguation, category and list "
 				+ "pages...");
 		LOG.info(" - input: " + inputPath);
 		LOG.info(" - output: " + outputPath);
 		
-		JobConf conf = new JobConf(config, ExtractWikiArticleTitles.class);
+		JobConf conf = new JobConf(config, WikiArticleTitlesIndexBuilder.class);
 		conf.setJobName(
 				String.format(
 						"WikipediaProcessing: extractPrimaryArticleTitlesTask[input: %s, output: %s]", 
@@ -65,9 +74,9 @@ public class ExtractWikiArticleTitles extends Configured implements Tool {
 						outputPath
 				)
 		);
-		conf.setJarByClass(ExtractWikiArticleTitles.class);
+		conf.setJarByClass(WikiArticleTitlesIndexBuilder.class);
 
-		conf.setNumReduceTasks(0);
+		conf.setNumReduceTasks(num_reducers);
 
 		SequenceFileInputFormat.addInputPath(conf, new Path(inputPath));
 		TextOutputFormat.setOutputPath(conf, new Path(outputPath));
@@ -88,6 +97,9 @@ public class ExtractWikiArticleTitles extends Configured implements Tool {
 
 	private static final String INPUT_OPTION = "input";
 	private static final String OUTPUT_OPTION = "output";
+	private static final String NUM_REDUCERS_OPTION = "num_reducers";
+	
+	private static final int DEFAULT_NUM_REDUCERS = 1;
 	
 	@SuppressWarnings("static-access")
 	@Override
@@ -97,6 +109,8 @@ public class ExtractWikiArticleTitles extends Configured implements Tool {
 				.hasArg().withDescription("wikipedia sequence file").isRequired().create(INPUT_OPTION));
 		options.addOption(OptionBuilder.withArgName("path")
 				.hasArg().withDescription("output").create(OUTPUT_OPTION));
+		options.addOption(OptionBuilder.withArgName("num_reducers")
+				.hasArg().withDescription("number of reducers").create(NUM_REDUCERS_OPTION));
 
 		CommandLine cmdline;
 		CommandLineParser parser = new GnuParser();
@@ -112,19 +126,25 @@ public class ExtractWikiArticleTitles extends Configured implements Tool {
 		Random random = new Random();
 		String tmp = "tmp-" + this.getClass().getCanonicalName() + "-" + random.nextInt(10000);
 
+		Integer num_reducers = 
+				cmdline.hasOption(NUM_REDUCERS_OPTION) ? 
+						Integer.parseInt(cmdline.getOptionValue(NUM_REDUCERS_OPTION)) : 
+						DEFAULT_NUM_REDUCERS;
+						
 		task(
 				getConf(),
 				cmdline.getOptionValue(INPUT_OPTION), 
-				cmdline.getOptionValue(OUTPUT_OPTION, tmp)
+				cmdline.getOptionValue(OUTPUT_OPTION, tmp),
+				num_reducers
 		);
 
 		return 0;
 	}
 	
-	public ExtractWikiArticleTitles() {
+	public WikiArticleTitlesIndexBuilder() {
 	}
 	
 	public static void main(String[] args) throws Exception {
-		ToolRunner.run(new ExtractWikiArticleTitles(), args);
+		ToolRunner.run(new WikiArticleTitlesIndexBuilder(), args);
 	}
 }

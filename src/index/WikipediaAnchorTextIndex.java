@@ -1,4 +1,4 @@
-package knowledgebase;
+package index;
 
 import java.io.BufferedReader;
 import java.io.FileReader;
@@ -7,10 +7,9 @@ import java.util.HashSet;
 
 public class WikipediaAnchorTextIndex extends HashSet<String>{
 	private static final long serialVersionUID = -2835232426707302378L;
-	private static final int INITIAL_SIZE = 6423968;
+	private static final int INITIAL_SIZE = 9123078;
 	
 	public WikipediaAnchorTextIndex(int size) {
-	  // RAM (heap) efficient capacity setting
     super(size * 4 / 3 + 1);
 	}
 	

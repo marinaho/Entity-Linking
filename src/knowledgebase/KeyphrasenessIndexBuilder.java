@@ -1,5 +1,7 @@
 package knowledgebase;
 
+import index.WikipediaAnchorTextIndex;
+
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -43,8 +45,12 @@ import edu.umd.cloud9.collection.wikipedia.WikipediaPage;
 import edu.umd.cloud9.collection.wikipedia.WikipediaPage.Link;
 import edu.umd.cloud9.io.pair.PairOfInts;
 
-public class ExtractKeyphrasenessPipeline extends Configured implements Tool {
-	private static final Logger LOG = Logger.getLogger(ExtractEntityMentionPipeline.class);
+/*
+ * Extracts keyphraseness for anchor text mentions.
+ * Output format: mention \t #documents with linked mention \t #documents with mention.
+ */
+public class KeyphrasenessIndexBuilder extends Configured implements Tool {
+	private static final Logger LOG = Logger.getLogger(EntityMentionIndexBuilder.class);
 
 	private static final String INPUT_OPTION = "input";
 	private static final String NUM_REDUCERS_OPTION = "num_reducers";
@@ -52,16 +58,16 @@ public class ExtractKeyphrasenessPipeline extends Configured implements Tool {
 	private static final String ANCHOR_TEXT_INDEX_OPTION = "anchor_text";
 
 	private static final int DEFAULT_NUM_REDUCERS = 10;
-	private static final String DEFAULT_ANCHOR_TEXT_FILE = "mention_entity_index";
+	private static final String DEFAULT_ANCHOR_TEXT_FILE = "/mention-entity-index.txt";
 	
 	static final String ANCHOR_TEXT_INDEX_SYMLINK = "anchor_file";
 	
 	private static final int NGRAM_SIZE = 8;
 
 	public static class Map extends MapReduceBase implements
-			Mapper<IntWritable, WikipediaPage, Text, IntWritable> {
+			Mapper<IntWritable, WikipediaPage, Text, PairOfInts> {
 		private static Text outputKey = new Text();
-		private static IntWritable outputValue = new IntWritable();
+		private static PairOfInts outputValue = new PairOfInts();
 		private static WikipediaAnchorTextIndex anchorTextSet;
 
 		@Override
@@ -79,13 +85,15 @@ public class ExtractKeyphrasenessPipeline extends Configured implements Tool {
 		 *  				key = mention, value = 1, if mention is linked
 		 */
 		@Override
-		public void map(IntWritable key, WikipediaPage p, 
-				OutputCollector<Text, IntWritable> output, Reporter reporter) throws IOException {
+		public void map(IntWritable key, WikipediaPage page, 
+				OutputCollector<Text, PairOfInts> output, Reporter reporter) throws IOException {
+			if (!page.isArticle()) {
+				return;
+			}
 			reporter.incrCounter(PageTypes.TOTAL, 1);
-
-			String normalizedContent = Normalizer.normalize(p.getContent());
+			String normalizedContent = Normalizer.normalize(page.getContent());
 			StringTokenizer tokenizer = new StringTokenizer(normalizedContent);
-			Set<String> set = new HashSet<String>();
+			Set<String> ngramsSet = new HashSet<String>();
 			
 			StringBuilder ngrams[] = new StringBuilder[NGRAM_SIZE];
 			for (int i = 0; i < NGRAM_SIZE && tokenizer.hasMoreTokens(); ++i) {
@@ -94,7 +102,7 @@ public class ExtractKeyphrasenessPipeline extends Configured implements Tool {
 				for(int j = 0; j <= i; ++j) {
 					ngrams[j].append(next);
 					if (anchorTextSet.contains(ngrams[j].toString())) {
-						set.add(ngrams[j].toString());
+						ngramsSet.add(ngrams[j].toString());
 					}
 				}
 			}
@@ -104,51 +112,49 @@ public class ExtractKeyphrasenessPipeline extends Configured implements Tool {
 				String next = tokenizer.nextToken();
 				ngrams[start] = new StringBuilder(next);
 				if (anchorTextSet.contains(next)) {
-					set.add(next);
+					ngramsSet.add(next);
 				}
 				
 				for (int i = (start + 1) % NGRAM_SIZE; i != start; i = (i + 1) % NGRAM_SIZE) {
 					ngrams[i].append(next);
 					if (anchorTextSet.contains(ngrams[i].toString())) {
-						set.add(ngrams[i].toString());
+						ngramsSet.add(ngrams[i].toString());
 					}
 				}
 			}
 			
-			for (Link link : p.extractLinks()) {	
+			for (Link link : page.extractLinks()) {	
 				String normalizedAnchorText = Normalizer.processAnchorText(link.getAnchorText());
-				if (set.contains(normalizedAnchorText)) {
-					outputKey.set(normalizedAnchorText);
-					outputValue.set(1);
-					output.collect(outputKey, outputValue);
-					set.remove(normalizedAnchorText);
-				}
+				outputKey.set(normalizedAnchorText);
+				outputValue.set(1, 1);
+				output.collect(outputKey, outputValue);
+				ngramsSet.remove(normalizedAnchorText);
 			}
 			
-			for(String mention: set) {
+			for(String mention: ngramsSet) {
 				outputKey.set(mention);
-				outputValue.set(0);
+				outputValue.set(0, 1);
 				output.collect(outputKey, outputValue);
 			}
 		}
 	}
-
-	public static class Reduce extends MapReduceBase implements
-	Reducer<Text, IntWritable, Text, PairOfInts> {
-
+	
+	public static class Reduce extends MapReduceBase
+			implements Reducer<Text, PairOfInts, Text, PairOfInts> {
+		PairOfInts outputValue = new PairOfInts();
 		@Override
-		public void reduce(Text key, Iterator<IntWritable> values,
+		public void reduce(Text key, Iterator<PairOfInts> values,
 				OutputCollector<Text, PairOfInts> output, Reporter reporter) throws IOException {		
 			int total = 0;
 			int linked = 0;
 			while (values.hasNext()) {
-				++total;
-				if (values.next().get() == 1) {
-					++linked;
-				}
+				PairOfInts value = values.next();
+				linked += value.getLeftElement();
+				total += value.getRightElement();
 			}	
-			output.collect(key, new PairOfInts(linked, total));
-		}
+			outputValue.set(linked, total);
+			output.collect(key, outputValue);
+		}		
 	}
 
 	@SuppressWarnings("static-access")
@@ -203,15 +209,15 @@ public class ExtractKeyphrasenessPipeline extends Configured implements Tool {
 		LOG.info(" - anchor text index file: " + anchorTextIndexPath);
 		LOG.info(" - number of reducers: " + num_reducers);
 
-		JobConf conf = new JobConf(config, ExtractKeyphrasenessPipeline.class);
+		JobConf conf = new JobConf(config, KeyphrasenessIndexBuilder.class);
 		conf.setJobName(String.format(
-				"ExtractKeyphrasenessPipeline:[input: %s, output: %s, anchor text index file: %s]", 
+				"KeyphrasenessIndexBuilder:[input: %s, output: %s, anchor text index file: %s]", 
 				inputPath, 
 				outputPath,
 				anchorTextIndexPath
 				)
 		);
-		conf.setJarByClass(ExtractKeyphrasenessPipeline.class);
+		conf.setJarByClass(KeyphrasenessIndexBuilder.class);
 
 		conf.setNumReduceTasks(num_reducers);
 
@@ -222,10 +228,11 @@ public class ExtractKeyphrasenessPipeline extends Configured implements Tool {
 		conf.setOutputFormat(TextOutputFormat.class);
 		
 		conf.setMapOutputKeyClass(Text.class);
-		conf.setMapOutputValueClass(IntWritable.class);
+		conf.setMapOutputValueClass(PairOfInts.class);
 
-		conf.setMapperClass(ExtractKeyphrasenessPipeline.Map.class);
-		conf.setReducerClass(ExtractKeyphrasenessPipeline.Reduce.class);
+		conf.setMapperClass(KeyphrasenessIndexBuilder.Map.class);
+		conf.setCombinerClass(KeyphrasenessIndexBuilder.Reduce.class);
+		conf.setReducerClass(KeyphrasenessIndexBuilder.Reduce.class);
 
 		// Delete the output directory if it exists already.
 		FileSystem.get(conf).delete(new Path(outputPath), true);
@@ -238,10 +245,10 @@ public class ExtractKeyphrasenessPipeline extends Configured implements Tool {
 		JobClient.runJob(conf);		
 	}
 	
-	public ExtractKeyphrasenessPipeline() {
+	public KeyphrasenessIndexBuilder() {
 	}
 	
 	public static void main(String[] args) throws Exception {
-		ToolRunner.run(new ExtractKeyphrasenessPipeline(), args);
+		ToolRunner.run(new KeyphrasenessIndexBuilder(), args);
 	}
 }

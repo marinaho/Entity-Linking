@@ -1,5 +1,8 @@
 package knowledgebase;
 
+import index.WikipediaRedirectPagesIndex;
+import index.WikipediaTitlesIndex;
+
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -7,7 +10,6 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Random;
 
-import knowledgebase.WikiPipeline.PageTypes;
 import normalizer.Normalizer;
 
 import org.apache.commons.cli.CommandLine;
@@ -45,24 +47,51 @@ import edu.umd.cloud9.collection.wikipedia.WikipediaPage.Link;
 import edu.umd.cloud9.io.pair.PairOfIntString;
 
 /*
- * Extract anchor text - entity index and entity - entity index
+ * Extracts anchor text - entity index and entity - entity index.
+ * Entites are represented by wikipedia page ids. Debug version uses wikipedia page titles.
+ * 1. Download and extract wikipedia xml dump from: 
+ * 		http://dumps.wikimedia.org/enwiki/latest/enwiki-latest-pages-articles.xml.bz2
+ * 2. Repack wikipedia using Cloud9 into sequence file format: 
+ * 		(See http://lintool.github.io/Cloud9/docs/content/wikipedia.html)
+ * a) Create sequentially-numbered docnos: 
+ * 			hadoop edu.umd.cloud9.collection.wikipedia.WikipediaDocnoMappingBuilder \
+ *				-input enwiki-latest-pages-articles.xml -output_file enwiki-latest-docno.dat 
+ *				-wiki_language en -keep_all 
+ * b) Repack wikipedia using block compression:
+ * 			hadoop edu.umd.cloud9.collection.wikipedia.RepackWikipedia \
+ * 				-input enwiki-latest-pages-articles.xml \
+ * 				-output enwiki-latest.block -wiki_language en \
+ * 				-mapping_file enwiki-latest-docno.dat -compression_type block
+ * 3. Use ExtractWikiArticleTitles to create a list of wikipedia article titles 
+ * 		(see class for commands) and save the file in hadoop filesystem path: /enwiki-titles.txt
+ * 4. Extract Wikipedia redirect pages mapping: (see https://code.google.com/p/wikipedia-redirect/)
+ * 		to hadoop filesystem path: /enwiki-redirect.txt
+ * 5. Create jar from project by using Eclipse: WikiPipeline.jar
+ * 6. Run: 
+ * 			hadoop WikiPipeline.jar knowledgebase.ExtractEntityMentionPipeline \
+ * 				-input enwiki-latest.block -output wikipedia-index
  */
-public class ExtractEntityMentionPipeline extends Configured implements Tool {
-	private static final Logger LOG = Logger.getLogger(ExtractEntityMentionPipeline.class);
+public class EntityMentionIndexBuilder extends Configured implements Tool {
+	private static final Logger LOG = Logger.getLogger(EntityMentionIndexBuilder.class);
 	
+  private static enum Counters {
+    PAGES_TOTAL
+  };
+  
 	public static class Map extends MapReduceBase implements
-			Mapper<IntWritable, WikipediaPage, PairOfIntString, Text> {
+			Mapper<IntWritable, WikipediaPage, PairOfIntString, IntWritable> {
 		private static PairOfIntString outputKey = new PairOfIntString();
+		private static IntWritable outputValue = new IntWritable();
 		private static WikipediaRedirectPagesIndex redirectIndex;
 		private static WikipediaTitlesIndex titlesIndex;
 
 		@Override
 		public void configure(JobConf job) {
 			String redirectIndexPath = job.get(REDIRECT_SYMLINK);
-			String titlesIndexPath = job.get(TITLES_SYMLINK);
+      String titlesIndexPath = job.get(TITLES_SYMLINK);
 			try {
 				redirectIndex = WikipediaRedirectPagesIndex.load(redirectIndexPath);
-//				titlesIndex = WikipediaTitlesIndex.load(titlesIndexPath);
+  		  titlesIndex = WikipediaTitlesIndex.load(titlesIndexPath);
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
@@ -73,52 +102,53 @@ public class ExtractEntityMentionPipeline extends Configured implements Tool {
 		 *  			2. Entity-entity mapping:  key = (2, to entity), value = from entity
 		 */
 		@Override
-		public void map(IntWritable key, WikipediaPage p, 
-				OutputCollector<PairOfIntString, Text> output, Reporter reporter) throws IOException {
-			reporter.incrCounter(PageTypes.TOTAL, 1);
-
-			String title = p.getTitle();
-//	  int fromId = WikiUtils.getTitleId(title, titlesIndex);
-//		if (fromId == -1) {
-//			return;
-//		}
-			if (WikiUtils.isCategoryPage(title)) {
+		public void map(IntWritable key, WikipediaPage page, 
+				OutputCollector<PairOfIntString, IntWritable> output, Reporter reporter) 
+						throws IOException {	
+			if (!page.isArticle()) {
 				return;
 			}
-			
-			for (Link link : p.extractLinks()) {	
+			reporter.incrCounter(Counters.PAGES_TOTAL, 1);
+			String title = page.getTitle();
+  	  int fromId = titlesIndex.getTitleId(title);
+		
+			for (Link link : page.extractLinks()) {	
 				String normalizedAnchorText = Normalizer.processAnchorText(link.getAnchorText());
-				if (normalizedAnchorText.equals("")) {
-					continue;
-				}
-
 				String normalizedTarget = Normalizer.processTargetLink(link.getTarget());
-				normalizedTarget = WikiUtils.redirect(normalizedTarget, redirectIndex);
-//			int toId = WikiUtils.getTitleId(normalizedTarget, titlesIndex);
-//			if (toId == -1) {
-//				continue;
-//			}
+				String canonicalTarget = WikiUtils.getCanonicalURL(normalizedTarget, redirectIndex);
+  			int toId = titlesIndex.getTitleId(canonicalTarget);
 				
-				if (WikiUtils.isListPage(normalizedTarget) || WikiUtils.isCategoryPage(normalizedTarget)) {
-					continue;
+				if (toId != -1 && !normalizedAnchorText.equals("")) {
+					outputKey.set(1, normalizedAnchorText);
+					outputValue.set(toId);
+					output.collect(outputKey, outputValue);
 				}
 
-				outputKey.set(1, normalizedAnchorText);
-				output.collect(outputKey, new Text(normalizedTarget));
-
-				if (WikiUtils.isListPage(title) || WikiUtils.isDisambiguationPage(title)) {
-					continue;
+				if (toId != -1 && fromId != -1) {
+					outputKey.set(2, String.valueOf(toId));
+					outputValue.set(fromId);
+					output.collect(outputKey, outputValue);
 				}
-
-				outputKey.set(2, normalizedTarget);
-				output.collect(outputKey, new Text(title));
 			}
+		
+	/*		String normalizedContent = Normalizer.normalize(page.getContent());
+			StringTokenizer tokenizer = new StringTokenizer(normalizedContent);
+			Set<String> terms = new HashSet<String>();
+			while (tokenizer.hasMoreTokens()) {
+				terms.add(tokenizer.nextToken());
+			}
+			for (String term: terms) {
+				outputKey.set(3, term);
+				output.collect(outputKey, outputOne);
+			}*/
 		}
 	}
 	
 	public static class Reduce extends MapReduceBase implements
-	Reducer<PairOfIntString, Text, Text, Text> {
+	    Reducer<PairOfIntString, IntWritable, Text, Text> {
 		private MultipleOutputs output;
+		private Text outputKey = new Text();
+		private Text outputValue = new Text();
 
 		@Override
 		public void configure(final JobConf job) {
@@ -128,26 +158,27 @@ public class ExtractEntityMentionPipeline extends Configured implements Tool {
 
 		@SuppressWarnings("unchecked")
 		@Override
-		public void reduce(PairOfIntString key, Iterator<Text> values,
-				OutputCollector<Text, Text> collector, Reporter reporter) throws IOException {		
-			HashSet<String> set = new HashSet<String>();			
+		public void reduce(PairOfIntString key, Iterator<IntWritable> values,
+				OutputCollector<Text, Text> collector, Reporter reporter) throws IOException {
+			String outputFile = getOutputFile(key.getLeftElement());		
+			HashSet<Integer> set = new HashSet<Integer>();	
+			
 			while (values.hasNext()) {
-				set.add(values.next().toString());		
+				set.add(values.next().get());
 			}	
-
-			String value = StringUtils.join(set.toArray(), "\t");
-			String outputFile = getOutputFile(key.getLeftElement());
-
-			output.getCollector(outputFile, reporter)
-			.collect(new Text(key.getRightElement()), new Text(value));
+			
+			outputKey.set(key.getRightElement());
+			outputValue.set(StringUtils.join(set.toArray(), "\t"));
+			output.getCollector(outputFile, reporter).collect(outputKey, outputValue);
 		}
+
 
 		public String getOutputFile(int key) {
 			switch (key) {
-			case 1:
-				return MENTION_INDEX;
-			case 2:
-				return TO_ENTITY_INDEX;
+			  case 1:
+			  	return MENTION_INDEX;
+			  case 2:
+			  	return TO_ENTITY_INDEX;
 			}
 			throw new IllegalArgumentException("Key must be 1 or 2. Input key is " + key);
 		}
@@ -220,23 +251,23 @@ public class ExtractEntityMentionPipeline extends Configured implements Tool {
 	@SuppressWarnings("deprecation")
 	public void task1(Configuration config, String inputPath, String outputPath, String titlesPath,
 			String redirectMapPath, int num_reducers) throws IOException, URISyntaxException {
-		LOG.info("Exracting mention-entity & entity-entity mapping...");
+		LOG.info("Extracting mention-entity & entity-entity mapping...");
 		LOG.info(" - input: " + inputPath);
 		LOG.info(" - output: " + outputPath);
 		LOG.info(" - titles index: " + titlesPath);
 		LOG.info(" - redirect mapping file: " + redirectMapPath);
 		LOG.info(" - number of reducers: " + num_reducers);
 
-		JobConf conf = new JobConf(config, ExtractEntityMentionPipeline.class);
+		JobConf conf = new JobConf(config, EntityMentionIndexBuilder.class);
 		conf.setJobName(String.format(
-				"ExtractEntityMentionPipeline:[input: %s, output: %s, titles: %s, redirect mapping: %s]", 
+				"EntityMentionIndexBuilder:[input: %s, output: %s, titles: %s, redirect mapping: %s]", 
 				inputPath, 
 				outputPath,
 				titlesPath,
 				redirectMapPath
 				)
 		);
-		conf.setJarByClass(ExtractEntityMentionPipeline.class);
+		conf.setJarByClass(EntityMentionIndexBuilder.class);
 
 		conf.setNumReduceTasks(num_reducers);
 
@@ -250,27 +281,28 @@ public class ExtractEntityMentionPipeline extends Configured implements Tool {
 				Text.class);
 		
 		conf.setMapOutputKeyClass(PairOfIntString.class);
-		conf.setMapOutputValueClass(Text.class);
+		conf.setMapOutputValueClass(IntWritable.class);
+//	conf.setCompressMapOutput(true);
 
-		conf.setMapperClass(ExtractEntityMentionPipeline.Map.class);
-		conf.setReducerClass(ExtractEntityMentionPipeline.Reduce.class);
+		conf.setMapperClass(EntityMentionIndexBuilder.Map.class);
+		conf.setReducerClass(EntityMentionIndexBuilder.Reduce.class);
 
 		// Delete the output directory if it exists already.
 		FileSystem.get(conf).delete(new Path(outputPath), true);
 		
 		DistributedCache.createSymlink(conf);
 		DistributedCache.addCacheFile(new URI(redirectMapPath + "#" + REDIRECT_SYMLINK), conf);
-		DistributedCache.addCacheFile(new URI(titlesPath + "#" + TITLES_SYMLINK), conf);
+	  DistributedCache.addCacheFile(new URI(titlesPath + "#" + TITLES_SYMLINK), conf);
 		conf.set(TITLES_SYMLINK, TITLES_SYMLINK);
 		conf.set(REDIRECT_SYMLINK, REDIRECT_SYMLINK);
 		
 		JobClient.runJob(conf);
 	}
 	
-	public ExtractEntityMentionPipeline() {
+	public EntityMentionIndexBuilder() {
 	}
 	
 	public static void main(String[] args) throws Exception {
-		ToolRunner.run(new ExtractEntityMentionPipeline(), args);
+		ToolRunner.run(new EntityMentionIndexBuilder(), args);
 	}
 }
