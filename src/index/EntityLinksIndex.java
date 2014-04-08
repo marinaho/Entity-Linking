@@ -5,17 +5,17 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.util.HashMap;
 
-public class WikipediaEntityLinksIndex extends HashMap<Integer, Integer[]>{
+public class EntityLinksIndex extends HashMap<Integer, Integer[]>{
 
 	private static final long serialVersionUID = 2718316266900207592L;
 	private static final int INITIAL_SIZE = 3814359;
 	
-	public WikipediaEntityLinksIndex(int size) {
-    super(size * 4 / 3 + 1);
+	public EntityLinksIndex(int size) {
+    super(size);
 	}
 	
-	public static WikipediaEntityLinksIndex load(String path)  throws IOException {
-		WikipediaEntityLinksIndex dictionary = new WikipediaEntityLinksIndex(INITIAL_SIZE);
+	public static EntityLinksIndex load(String path)  throws IOException {
+		EntityLinksIndex dictionary = new EntityLinksIndex(INITIAL_SIZE);
 		BufferedReader in = new BufferedReader(new FileReader(path));
 		String line;
 

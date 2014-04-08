@@ -3,6 +3,8 @@ package knowledgebase;
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.util.Iterator;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
@@ -71,7 +73,7 @@ public class MentionEntitiesKeyphrasenessIndexBuilder extends Configured impleme
 	
 	public static class Reduce extends MapReduceBase implements 
 			Reducer<Text, PairOfIntString, Text, Text> {
-
+		
 		@Override
 		public void reduce(Text key, Iterator<PairOfIntString> values,
 				OutputCollector<Text, Text> output, Reporter reporter) throws IOException {
@@ -84,8 +86,14 @@ public class MentionEntitiesKeyphrasenessIndexBuilder extends Configured impleme
 					candidates = pair.getRightElement();
 				}
 			}
+			
 			if (!candidates.equals("") && !keyphraseness.equals("")) {
-				output.collect(key, new Text(keyphraseness + "\t" + candidates));
+				Pattern pattern = Pattern.compile("\\((\\d+),\\s+(\\d+)");
+				Matcher matcher = pattern.matcher(keyphraseness);
+				matcher.find();
+				int linked = Integer.parseInt(matcher.group(1));
+				int total = Integer.parseInt(matcher.group(2));
+				output.collect(key, new Text(linked + "\t" + total + "\t" + candidates));
 			}
 		}
 	}
@@ -137,7 +145,7 @@ public class MentionEntitiesKeyphrasenessIndexBuilder extends Configured impleme
 				outputPath
 				)
 		);
-		conf.setJarByClass(EntityMentionIndexBuilder.class);
+		conf.setJarByClass(MentionEntitiesKeyphrasenessIndexBuilder.class);
 
 		conf.setNumReduceTasks(1);
 

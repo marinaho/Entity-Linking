@@ -1,6 +1,6 @@
 package knowledgebase;
 
-import index.WikipediaRedirectPagesIndex;
+import index.RedirectPagesIndex;
 
 import java.io.IOException;
 import java.net.URI;
@@ -19,7 +19,6 @@ import org.apache.commons.cli.HelpFormatter;
 import org.apache.commons.cli.OptionBuilder;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
-import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.filecache.DistributedCache;
@@ -41,6 +40,8 @@ import org.apache.hadoop.mapred.lib.MultipleOutputs;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 import org.apache.log4j.Logger;
+
+import com.google.common.base.Joiner;
 
 import edu.umd.cloud9.collection.wikipedia.WikipediaPage;
 import edu.umd.cloud9.collection.wikipedia.WikipediaPage.Link;
@@ -79,17 +80,17 @@ public class EntityMentionIndexBuilderDebug extends Configured implements Tool {
     PAGES_TOTAL
   };
   
-	public static class Map extends MapReduceBase implements
-			Mapper<IntWritable, WikipediaPage, PairOfIntString, Text> {
+	public static class Map extends MapReduceBase 
+			implements Mapper<IntWritable, WikipediaPage, PairOfIntString, Text> {
 		private static PairOfIntString outputKey = new PairOfIntString();
 		private static Text outputValue = new Text();
-		private static WikipediaRedirectPagesIndex redirectIndex;
+		private static RedirectPagesIndex redirectIndex;
 
 		@Override
 		public void configure(JobConf job) {
 			String redirectIndexPath = job.get(REDIRECT_SYMLINK);
 			try {
-				redirectIndex = WikipediaRedirectPagesIndex.load(redirectIndexPath);
+				redirectIndex = RedirectPagesIndex.load(redirectIndexPath);
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
@@ -127,8 +128,8 @@ public class EntityMentionIndexBuilderDebug extends Configured implements Tool {
 		}
 	}
 	
-	public static class Reduce extends MapReduceBase implements
-			Reducer<PairOfIntString, Text, Text, Text> {
+	public static class Reduce extends MapReduceBase
+			implements Reducer<PairOfIntString, Text, Text, Text> {
 		private MultipleOutputs output;
 		private Text outputKey = new Text();
 		private Text outputTextValue = new Text();
@@ -149,7 +150,7 @@ public class EntityMentionIndexBuilderDebug extends Configured implements Tool {
 				candidatesList.add(values.next().toString());
 			}	
 			outputKey.set(key.getRightElement());
-			outputTextValue.set(StringUtils.join(candidatesList.toArray(), "\t"));
+			outputTextValue.set(Joiner.on("\t").join(candidatesList.toArray()));
 			output.getCollector(outputFile, reporter).collect(outputKey, outputTextValue);
 		}
 		

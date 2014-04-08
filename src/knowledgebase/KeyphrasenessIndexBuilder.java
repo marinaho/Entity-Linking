@@ -1,6 +1,6 @@
 package knowledgebase;
 
-import index.WikipediaAnchorTextIndex;
+import index.AnchorTextIndex;
 
 import java.io.IOException;
 import java.net.URI;
@@ -9,7 +9,6 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Random;
 import java.util.Set;
-import java.util.StringTokenizer;
 
 import knowledgebase.WikiPipeline.PageTypes;
 import normalizer.Normalizer;
@@ -21,6 +20,7 @@ import org.apache.commons.cli.HelpFormatter;
 import org.apache.commons.cli.OptionBuilder;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.filecache.DistributedCache;
@@ -50,7 +50,7 @@ import edu.umd.cloud9.io.pair.PairOfInts;
  * Output format: mention \t #documents with linked mention \t #documents with mention.
  */
 public class KeyphrasenessIndexBuilder extends Configured implements Tool {
-	private static final Logger LOG = Logger.getLogger(EntityMentionIndexBuilder.class);
+	private static final Logger LOG = Logger.getLogger(KeyphrasenessIndexBuilder.class);
 
 	private static final String INPUT_OPTION = "input";
 	private static final String NUM_REDUCERS_OPTION = "num_reducers";
@@ -62,19 +62,19 @@ public class KeyphrasenessIndexBuilder extends Configured implements Tool {
 	
 	static final String ANCHOR_TEXT_INDEX_SYMLINK = "anchor_file";
 	
-	private static final int NGRAM_SIZE = 8;
+	private static final int NGRAM_SIZE = 11;
 
 	public static class Map extends MapReduceBase implements
 			Mapper<IntWritable, WikipediaPage, Text, PairOfInts> {
 		private static Text outputKey = new Text();
 		private static PairOfInts outputValue = new PairOfInts();
-		private static WikipediaAnchorTextIndex anchorTextSet;
+		private static AnchorTextIndex anchorTextSet;
 
 		@Override
 		public void configure(JobConf job) {
 			String anchorTextPath = job.get(ANCHOR_TEXT_INDEX_SYMLINK);
 			try {
-				anchorTextSet = WikipediaAnchorTextIndex.load(anchorTextPath);
+				anchorTextSet = AnchorTextIndex.load(anchorTextPath);
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
@@ -92,43 +92,53 @@ public class KeyphrasenessIndexBuilder extends Configured implements Tool {
 			}
 			reporter.incrCounter(PageTypes.TOTAL, 1);
 			String normalizedContent = Normalizer.normalize(page.getContent());
-			StringTokenizer tokenizer = new StringTokenizer(normalizedContent);
+			String tokens[] = StringUtils.split(normalizedContent, " \t\f\n\r");
 			Set<String> ngramsSet = new HashSet<String>();
 			
 			StringBuilder ngrams[] = new StringBuilder[NGRAM_SIZE];
-			for (int i = 0; i < NGRAM_SIZE && tokenizer.hasMoreTokens(); ++i) {
+			// Create ngrams with tokens from positions 0 ... NGRAM_SIZE-1
+			int i;
+			for (i = 0; i < NGRAM_SIZE && i < tokens.length; ++i) {
 				ngrams[i] = new StringBuilder("");
-				String next = tokenizer.nextToken();
+
+				// Create ngrams ending in ith token.
 				for(int j = 0; j <= i; ++j) {
-					ngrams[j].append(next);
+					if (!ngrams[j].toString().equals("")) {
+						ngrams[j].append(" ");
+					}
+					ngrams[j].append(tokens[i]);
 					if (anchorTextSet.contains(ngrams[j].toString())) {
+				  	// Add ngram token[j], token[j+1], ... token[i]
 						ngramsSet.add(ngrams[j].toString());
 					}
 				}
 			}
 			
 			int start = 0;
-			while (tokenizer.hasMoreTokens()) {
-				String next = tokenizer.nextToken();
+			for (;i < tokens.length; ++i) {
+				String next = tokens[i];
 				ngrams[start] = new StringBuilder(next);
 				if (anchorTextSet.contains(next)) {
 					ngramsSet.add(next);
 				}
 				
-				for (int i = (start + 1) % NGRAM_SIZE; i != start; i = (i + 1) % NGRAM_SIZE) {
-					ngrams[i].append(next);
-					if (anchorTextSet.contains(ngrams[i].toString())) {
-						ngramsSet.add(ngrams[i].toString());
+				for (int j = (start + 1) % NGRAM_SIZE; j != start; j = (j + 1) % NGRAM_SIZE) {
+					ngrams[j].append(" " + next);
+					if (anchorTextSet.contains(ngrams[j].toString())) {
+						ngramsSet.add(ngrams[j].toString());
 					}
 				}
+				start = (start + 1) % NGRAM_SIZE;
 			}
 			
 			for (Link link : page.extractLinks()) {	
 				String normalizedAnchorText = Normalizer.processAnchorText(link.getAnchorText());
-				outputKey.set(normalizedAnchorText);
-				outputValue.set(1, 1);
-				output.collect(outputKey, outputValue);
-				ngramsSet.remove(normalizedAnchorText);
+				if (anchorTextSet.contains(normalizedAnchorText)) {
+					outputKey.set(normalizedAnchorText);
+					outputValue.set(1, 1);
+					output.collect(outputKey, outputValue);
+					ngramsSet.remove(normalizedAnchorText);
+				}
 			}
 			
 			for(String mention: ngramsSet) {
@@ -230,6 +240,9 @@ public class KeyphrasenessIndexBuilder extends Configured implements Tool {
 		conf.setMapOutputKeyClass(Text.class);
 		conf.setMapOutputValueClass(PairOfInts.class);
 
+		conf.setOutputKeyClass(Text.class);
+		conf.setOutputValueClass(PairOfInts.class);
+		
 		conf.setMapperClass(KeyphrasenessIndexBuilder.Map.class);
 		conf.setCombinerClass(KeyphrasenessIndexBuilder.Reduce.class);
 		conf.setReducerClass(KeyphrasenessIndexBuilder.Reduce.class);

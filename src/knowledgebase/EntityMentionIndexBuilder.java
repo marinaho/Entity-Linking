@@ -1,7 +1,7 @@
 package knowledgebase;
 
-import index.WikipediaRedirectPagesIndex;
-import index.WikipediaTitlesIndex;
+import index.RedirectPagesIndex;
+import index.TitlesIndex;
 
 import java.io.IOException;
 import java.net.URI;
@@ -19,7 +19,6 @@ import org.apache.commons.cli.HelpFormatter;
 import org.apache.commons.cli.OptionBuilder;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
-import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.filecache.DistributedCache;
@@ -41,6 +40,8 @@ import org.apache.hadoop.mapred.lib.MultipleOutputs;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 import org.apache.log4j.Logger;
+
+import com.google.common.base.Joiner;
 
 import edu.umd.cloud9.collection.wikipedia.WikipediaPage;
 import edu.umd.cloud9.collection.wikipedia.WikipediaPage.Link;
@@ -78,20 +79,20 @@ public class EntityMentionIndexBuilder extends Configured implements Tool {
     PAGES_TOTAL
   };
   
-	public static class Map extends MapReduceBase implements
-			Mapper<IntWritable, WikipediaPage, PairOfIntString, IntWritable> {
+	public static class Map extends MapReduceBase 
+			implements Mapper<IntWritable, WikipediaPage, PairOfIntString, IntWritable> {
 		private static PairOfIntString outputKey = new PairOfIntString();
 		private static IntWritable outputValue = new IntWritable();
-		private static WikipediaRedirectPagesIndex redirectIndex;
-		private static WikipediaTitlesIndex titlesIndex;
+		private static RedirectPagesIndex redirectIndex;
+		private static TitlesIndex titlesIndex;
 
 		@Override
 		public void configure(JobConf job) {
 			String redirectIndexPath = job.get(REDIRECT_SYMLINK);
       String titlesIndexPath = job.get(TITLES_SYMLINK);
 			try {
-				redirectIndex = WikipediaRedirectPagesIndex.load(redirectIndexPath);
-  		  titlesIndex = WikipediaTitlesIndex.load(titlesIndexPath);
+				redirectIndex = RedirectPagesIndex.load(redirectIndexPath);
+  		  titlesIndex = TitlesIndex.load(titlesIndexPath);
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
@@ -130,22 +131,11 @@ public class EntityMentionIndexBuilder extends Configured implements Tool {
 					output.collect(outputKey, outputValue);
 				}
 			}
-		
-	/*		String normalizedContent = Normalizer.normalize(page.getContent());
-			StringTokenizer tokenizer = new StringTokenizer(normalizedContent);
-			Set<String> terms = new HashSet<String>();
-			while (tokenizer.hasMoreTokens()) {
-				terms.add(tokenizer.nextToken());
-			}
-			for (String term: terms) {
-				outputKey.set(3, term);
-				output.collect(outputKey, outputOne);
-			}*/
 		}
 	}
 	
-	public static class Reduce extends MapReduceBase implements
-	    Reducer<PairOfIntString, IntWritable, Text, Text> {
+	public static class Reduce extends MapReduceBase 
+			implements Reducer<PairOfIntString, IntWritable, Text, Text> {
 		private MultipleOutputs output;
 		private Text outputKey = new Text();
 		private Text outputValue = new Text();
@@ -168,7 +158,7 @@ public class EntityMentionIndexBuilder extends Configured implements Tool {
 			}	
 			
 			outputKey.set(key.getRightElement());
-			outputValue.set(StringUtils.join(set.toArray(), "\t"));
+			outputValue.set(Joiner.on("\t").join(set.toArray()));
 			output.getCollector(outputFile, reporter).collect(outputKey, outputValue);
 		}
 

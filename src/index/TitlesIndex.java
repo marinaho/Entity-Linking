@@ -8,18 +8,18 @@ import java.util.HashMap;
 /*
  * Maps Wikipedia page titles to integer ids.
  */
-public class WikipediaTitlesIndex extends HashMap<String, Integer> {
+public class TitlesIndex extends HashMap<String, Integer> {
 	private static final long serialVersionUID = -2569377647680616197L;
 	private static final int INITIAL_SIZE = 4410555;
 
-	public WikipediaTitlesIndex(int size) {
-    super(size * 4 / 3 + 1);
+	public TitlesIndex(int size) {
+    super(size);
 	}
 	
-	public static WikipediaTitlesIndex load(String path)  throws IOException {
+	public static TitlesIndex load(String path)  throws IOException {
 		FileReader fileReader = new FileReader(path);
 		BufferedReader in = new BufferedReader(fileReader);
-		WikipediaTitlesIndex map = new WikipediaTitlesIndex(INITIAL_SIZE);
+		TitlesIndex map = new TitlesIndex(INITIAL_SIZE);
 		String line;
 
     while ((line = in.readLine()) != null ) {

@@ -5,16 +5,16 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.util.HashSet;
 
-public class WikipediaAnchorTextIndex extends HashSet<String>{
+public class AnchorTextIndex extends HashSet<String>{
 	private static final long serialVersionUID = -2835232426707302378L;
-	private static final int INITIAL_SIZE = 9123078;
+	private static final int INITIAL_SIZE = 9112827;
 	
-	public WikipediaAnchorTextIndex(int size) {
-    super(size * 4 / 3 + 1);
+	public AnchorTextIndex(int size) {
+    super(size);
 	}
 	
-	public static WikipediaAnchorTextIndex load(String path)  throws IOException {
-		WikipediaAnchorTextIndex dictionary = new WikipediaAnchorTextIndex(INITIAL_SIZE);
+	public static AnchorTextIndex load(String path)  throws IOException {
+		AnchorTextIndex dictionary = new AnchorTextIndex(INITIAL_SIZE);
 		BufferedReader in = new BufferedReader(new FileReader(path));
 		String line;
 

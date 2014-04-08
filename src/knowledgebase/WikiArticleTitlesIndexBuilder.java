@@ -48,13 +48,12 @@ public class WikiArticleTitlesIndexBuilder extends Configured implements Tool {
 		// Emit: key = article title, filter out redirects, disambiguation, list and category pages.
 		public void map(IntWritable key, WikipediaPage p, 
 				OutputCollector<Text, Text> output, Reporter reporter) throws IOException {
-			if (p.isRedirect() || p.isDisambiguation() || WikiUtils.isCategoryPage(p.getTitle()) ||
+			if (!p.isArticle() || p.isRedirect() || p.isDisambiguation() || WikiUtils.isCategoryPage(p.getTitle()) ||
 					WikiUtils.isListPage(p.getTitle())) 
 				return;
-			if (p.isArticle()) {
-				outputValue.set(p.getDocid());
-				output.collect(new Text(p.getTitle()), outputValue);
-			}
+			
+			outputValue.set(p.getDocid());
+			output.collect(new Text(p.getTitle()), outputValue);
 		}
 	}
 	

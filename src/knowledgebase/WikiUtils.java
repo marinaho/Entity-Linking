@@ -1,8 +1,10 @@
 package knowledgebase;
 
-import index.WikipediaRedirectPagesIndex;
+import index.RedirectPagesIndex;
 
 public class WikiUtils {
+	public static final int WIKIPEDIA_SIZE = 3814359;
+	
 	public static boolean isListPage(String title) {
 		return title.startsWith("List of ") || title.startsWith("list of");
 	}
@@ -18,7 +20,7 @@ public class WikiUtils {
 	/*
 	 * Several Wikipedia URLs can point to the same wikipedia page. 
 	 */
-	public static String getCanonicalURL(String title, WikipediaRedirectPagesIndex redirectIndex) {
+	public static String getCanonicalURL(String title, RedirectPagesIndex redirectIndex) {
 		if (redirectIndex.containsKey(title)) {
 			return redirectIndex.get(title);
 		}
