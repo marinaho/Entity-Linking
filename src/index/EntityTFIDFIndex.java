@@ -2,14 +2,14 @@ package index;
 
 import java.io.IOException;
 import java.text.DecimalFormat;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.SequenceFile;
 import org.apache.hadoop.io.Text;
@@ -17,8 +17,14 @@ import org.apache.log4j.Logger;
 
 import com.google.common.base.Preconditions;
 
-import edu.umd.cloud9.io.pair.PairOfStringFloat;
+import data.TFIDFEntry;
 
+/**
+ * Stores a mapping of (entity, file and offset).
+ * Can be used to load the entity tf-idf term vector by reading from disk the specified file at the
+ * given offset.
+ * The file loaded should be produced by @see knowledgebase.EntityTFIDFIndexBuilder .
+ */
 public class EntityTFIDFIndex {
   private static final Logger LOG = Logger.getLogger(EntityTFIDFIndex.class);
   
@@ -32,6 +38,11 @@ public class EntityTFIDFIndex {
 
   public EntityTFIDFIndex() {
     conf = new Configuration();
+  }
+  
+  public EntityTFIDFIndex(String collectionPath) {
+    conf = new Configuration();
+    this.collectionPath = collectionPath;
   }
 
   public EntityTFIDFIndex(Configuration conf, String collectionPath) {
@@ -50,7 +61,7 @@ public class EntityTFIDFIndex {
 
     blocks = in.readInt();
 
-    LOG.info(blocks + " blocks expected");
+    LOG.trace(blocks + " blocks expected");
     docnos = new int[blocks];
     offsets = new int[blocks];
     fileno = new short[blocks];
@@ -61,7 +72,7 @@ public class EntityTFIDFIndex {
       fileno[i] = in.readShort();
 
       if (i > 0 && i % 1000000 == 0)
-        LOG.info(i + " blocks read");
+        LOG.trace(i + " blocks read");
     }
 
     in.close();
@@ -71,7 +82,7 @@ public class EntityTFIDFIndex {
     return collectionPath;
   }
 
-  public List<PairOfStringFloat> getEntityTFIDFVector(int docno) {
+  public TFIDFEntry getEntityTFIDFVector(int docno) {
     long start = System.currentTimeMillis();
 
     // trap invalid docnos
@@ -80,19 +91,17 @@ public class EntityTFIDFIndex {
 
     int idx = Arrays.binarySearch(docnos, docno);
 
-    ArrayList<PairOfStringFloat> result = new ArrayList<PairOfStringFloat>();
     if (idx < 0) {
-      return result;
+      return null;
     }
 
     try {
       DecimalFormat df = new DecimalFormat("00000");
       Path file = new Path(collectionPath + "/part-" + df.format(fileno[idx]));
 
-      LOG.info("fetching docno " + docno + ": seeking to " + offsets[idx] + " at " + file);
+      LOG.trace("fetching docno " + docno + ": seeking to " + offsets[idx] + " at " + file);
 
-      SequenceFile.Reader reader = new SequenceFile.Reader(conf,
-          SequenceFile.Reader.file(file));
+      SequenceFile.Reader reader = new SequenceFile.Reader(conf, SequenceFile.Reader.file(file));
 
       LongWritable key = new LongWritable();
       Text value = new Text();
@@ -107,13 +116,14 @@ public class EntityTFIDFIndex {
       reader.close();
       long duration = System.currentTimeMillis() - start;
 
-      LOG.info(" docno " + docno + " fetched in " + duration + "ms");
+      LOG.trace(" docno " + docno + " fetched in " + duration + "ms");
       
-      String[] parts = value.toString().split("\t");
-      for (int i = 0; i < parts.length; i += 2) {
-      	result.add(new PairOfStringFloat(parts[i], Float.parseFloat(parts[i + 1])));
+      TFIDFEntry entry = new TFIDFEntry();
+      String parts[] = StringUtils.split(value.toString(), "\t");
+      for (int i = 0; i + 1 < parts.length; i += 2) {
+      	entry.put(parts[i], Double.parseDouble(parts[i + 1]));
       }
-      return result;
+      return entry;
     } catch (IOException e) {
       e.printStackTrace();
     }

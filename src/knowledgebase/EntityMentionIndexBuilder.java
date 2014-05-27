@@ -1,14 +1,15 @@
 package knowledgebase;
 
+import index.EntityLinksIndex;
 import index.RedirectPagesIndex;
 import index.TitlesIndex;
 
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Random;
+import java.util.TreeSet;
 
 import normalizer.Normalizer;
 
@@ -19,6 +20,7 @@ import org.apache.commons.cli.HelpFormatter;
 import org.apache.commons.cli.OptionBuilder;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.filecache.DistributedCache;
@@ -39,6 +41,7 @@ import org.apache.hadoop.mapred.TextOutputFormat;
 import org.apache.hadoop.mapred.lib.MultipleOutputs;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
+import org.apache.log4j.BasicConfigurator;
 import org.apache.log4j.Logger;
 
 import com.google.common.base.Joiner;
@@ -47,10 +50,17 @@ import edu.umd.cloud9.collection.wikipedia.WikipediaPage;
 import edu.umd.cloud9.collection.wikipedia.WikipediaPage.Link;
 import edu.umd.cloud9.io.pair.PairOfIntString;
 
-/*
+/**
+ * Extracts all candidate entities for a name. Entities are represented by unique integer ids.
  * Extracts anchor text - entity index and entity - entity index.
- * Entites are represented by wikipedia page ids. Debug version uses wikipedia page titles.
- * 1. Download and extract wikipedia xml dump from: 
+ * The anchor text - entity index can be obtained by merging the files that start with 
+ * the string contained in MENTION_INDEX.
+ * The entity - inlinks count index can be obtained by merging the files that start with 
+ * the string contained in ENTITY_ENTITY_INDEX.
+ * These indices can be loaded into memory by using @See AnchorTextIndex and @See EntityEntityIndex.
+ * 
+ * Entities are represented by Wikipedia page ids. Debug version outputs Wikipedia page titles.
+ * 1. Download and extract Wikipedia xml dump from: 
  * 		http://dumps.wikimedia.org/enwiki/latest/enwiki-latest-pages-articles.xml.bz2
  * 2. Repack wikipedia using Cloud9 into sequence file format: 
  * 		(See http://lintool.github.io/Cloud9/docs/content/wikipedia.html)
@@ -63,14 +73,15 @@ import edu.umd.cloud9.io.pair.PairOfIntString;
  * 				-input enwiki-latest-pages-articles.xml \
  * 				-output enwiki-latest.block -wiki_language en \
  * 				-mapping_file enwiki-latest-docno.dat -compression_type block
- * 3. Use ExtractWikiArticleTitles to create a list of wikipedia article titles 
+ * 3. Use WikiArticleTitlesIndexBuilder to create a list of wikipedia article titles 
  * 		(see class for commands) and save the file in hadoop filesystem path: /enwiki-titles.txt
  * 4. Extract Wikipedia redirect pages mapping: (see https://code.google.com/p/wikipedia-redirect/)
- * 		to hadoop filesystem path: /enwiki-redirect.txt
+ * 		Preprocess the mapping with: PreprocessRedirectMapping and store result in hadoop filesystem
+ * 		to /enwiki-redirect.txt
  * 5. Create jar from project by using Eclipse: WikiPipeline.jar
  * 6. Run: 
- * 			hadoop WikiPipeline.jar knowledgebase.ExtractEntityMentionPipeline \
- * 				-input enwiki-latest.block -output wikipedia-index
+ * 			hadoop WikiPipeline.jar knowledgebase.ExtractEntityMentionIndexBuilder \
+ * 				-input enwiki-latest.block -output /wikipedia-index
  */
 public class EntityMentionIndexBuilder extends Configured implements Tool {
 	private static final Logger LOG = Logger.getLogger(EntityMentionIndexBuilder.class);
@@ -81,13 +92,14 @@ public class EntityMentionIndexBuilder extends Configured implements Tool {
   
 	public static class Map extends MapReduceBase 
 			implements Mapper<IntWritable, WikipediaPage, PairOfIntString, IntWritable> {
-		private static PairOfIntString outputKey = new PairOfIntString();
-		private static IntWritable outputValue = new IntWritable();
+		private static final PairOfIntString outputKey = new PairOfIntString();
+		private static final IntWritable outputValue = new IntWritable();
 		private static RedirectPagesIndex redirectIndex;
 		private static TitlesIndex titlesIndex;
 
 		@Override
 		public void configure(JobConf job) {
+			BasicConfigurator.configure();
 			String redirectIndexPath = job.get(REDIRECT_SYMLINK);
       String titlesIndexPath = job.get(TITLES_SYMLINK);
 			try {
@@ -98,9 +110,9 @@ public class EntityMentionIndexBuilder extends Configured implements Tool {
 			}
 		}
 
-		/*
-		 *  Emit:	1. Mention-entity mapping: key = (1, anchor text), value = entity
-		 *  			2. Entity-entity mapping:  key = (2, to entity), value = from entity
+		/**
+		 *  Emits: 1. Mention-entity mapping: key = (1, anchor text), value = entity
+		 *  			 2. Entity-entity mapping:  key = (2, to entity), value = from entity
 		 */
 		@Override
 		public void map(IntWritable key, WikipediaPage page, 
@@ -112,20 +124,21 @@ public class EntityMentionIndexBuilder extends Configured implements Tool {
 			reporter.incrCounter(Counters.PAGES_TOTAL, 1);
 			String title = page.getTitle();
   	  int fromId = titlesIndex.getTitleId(title);
-		
+
 			for (Link link : page.extractLinks()) {	
 				String normalizedAnchorText = Normalizer.processAnchorText(link.getAnchorText());
 				String normalizedTarget = Normalizer.processTargetLink(link.getTarget());
-				String canonicalTarget = WikiUtils.getCanonicalURL(normalizedTarget, redirectIndex);
+				String canonicalTarget = redirectIndex.getCanonicalURL(normalizedTarget);
   			int toId = titlesIndex.getTitleId(canonicalTarget);
 				
-				if (toId != -1 && !normalizedAnchorText.equals("")) {
+				if (toId != TitlesIndex.NOT_CANONICAL_TITLE && 
+						StringUtils.isNotBlank(normalizedAnchorText)) {
 					outputKey.set(1, normalizedAnchorText);
 					outputValue.set(toId);
 					output.collect(outputKey, outputValue);
 				}
 
-				if (toId != -1 && fromId != -1) {
+				if (toId != TitlesIndex.NOT_CANONICAL_TITLE && fromId != TitlesIndex.NOT_CANONICAL_TITLE) {
 					outputKey.set(2, String.valueOf(toId));
 					outputValue.set(fromId);
 					output.collect(outputKey, outputValue);
@@ -137,8 +150,8 @@ public class EntityMentionIndexBuilder extends Configured implements Tool {
 	public static class Reduce extends MapReduceBase 
 			implements Reducer<PairOfIntString, IntWritable, Text, Text> {
 		private MultipleOutputs output;
-		private Text outputKey = new Text();
-		private Text outputValue = new Text();
+		private static final Text outputKey = new Text();
+		private static final Text outputValue = new Text();
 
 		@Override
 		public void configure(final JobConf job) {
@@ -146,29 +159,30 @@ public class EntityMentionIndexBuilder extends Configured implements Tool {
 			output = new MultipleOutputs(job);
 		}
 
+		/**
+		 * Emits: 1. (key = anchor text, value = list of top entities ids)
+		 * 				2. (key = entity id, value = sorted list of entities that link to the key)
+		 */
 		@SuppressWarnings("unchecked")
 		@Override
-		public void reduce(PairOfIntString key, Iterator<IntWritable> values,
+		public void reduce(PairOfIntString key, Iterator<IntWritable> values, 
 				OutputCollector<Text, Text> collector, Reporter reporter) throws IOException {
-			String outputFile = getOutputFile(key.getLeftElement());		
-			HashSet<Integer> set = new HashSet<Integer>();	
-			
+			TreeSet<Integer> valuesSet = new TreeSet<Integer>();
 			while (values.hasNext()) {
-				set.add(values.next().get());
-			}	
-			
+				valuesSet.add(values.next().get());
+			}
 			outputKey.set(key.getRightElement());
-			outputValue.set(Joiner.on("\t").join(set.toArray()));
+			outputValue.set(Joiner.on(EntityLinksIndex.SEPARATOR).join(valuesSet));			
+			String outputFile = getOutputFile(key.getLeftElement());
 			output.getCollector(outputFile, reporter).collect(outputKey, outputValue);
 		}
-
 
 		public String getOutputFile(int key) {
 			switch (key) {
 			  case 1:
 			  	return MENTION_INDEX;
 			  case 2:
-			  	return TO_ENTITY_INDEX;
+			  	return ENTITY_ENTITY_INDEX;
 			}
 			throw new IllegalArgumentException("Key must be 1 or 2. Input key is " + key);
 		}
@@ -183,14 +197,15 @@ public class EntityMentionIndexBuilder extends Configured implements Tool {
 	// See https://code.google.com/p/wikipedia-redirect/ .
 	private static final String REDIRECT_MAPPING_OPTION = "redirect_map";
 	
-	private static final int DEFAULT_NUM_REDUCERS = 10;
+	private static final int DEFAULT_NUM_REDUCERS = 1;
 	private static final String DEFAULT_TITLES_INDEX_FILE = "/enwiki-titles.txt";
 	private static final String DEFAULT_REDIRECT_FILE = "/enwiki-redirect.txt";
 	
 	private static final String TITLES_SYMLINK = "titles_file";
 	private static final String REDIRECT_SYMLINK = "redirect_file";
+	
 	static final String MENTION_INDEX = "mention";
-	static final String TO_ENTITY_INDEX = "to";
+	static final String ENTITY_ENTITY_INDEX = "to";
 
 	@SuppressWarnings("static-access")
 	@Override
@@ -224,12 +239,13 @@ public class EntityMentionIndexBuilder extends Configured implements Tool {
 						DEFAULT_NUM_REDUCERS;
 
 		Random random = new Random();
-		String tmp = "tmp-" + this.getClass().getCanonicalName() + "-" + random.nextInt(10000);
+		String defaultOutput = "output-" + this.getClass().getCanonicalName() + "-" + 
+				random.nextInt(10000);
 
 		task1(
 				getConf(),
 				cmdline.getOptionValue(INPUT_OPTION), 
-				cmdline.getOptionValue(OUTPUT_OPTION, tmp), 
+				cmdline.getOptionValue(OUTPUT_OPTION, defaultOutput), 
 				cmdline.getOptionValue(TITLES_INDEX_OPTION, DEFAULT_TITLES_INDEX_FILE),
 				cmdline.getOptionValue(REDIRECT_MAPPING_OPTION, DEFAULT_REDIRECT_FILE),
 				num_reducers
@@ -267,16 +283,15 @@ public class EntityMentionIndexBuilder extends Configured implements Tool {
 		conf.setInputFormat(SequenceFileInputFormat.class);
 		MultipleOutputs.addNamedOutput(conf, MENTION_INDEX, TextOutputFormat.class, Text.class, 
 				Text.class);
-		MultipleOutputs.addNamedOutput(conf, TO_ENTITY_INDEX, TextOutputFormat.class, Text.class, 
+		MultipleOutputs.addNamedOutput(conf, ENTITY_ENTITY_INDEX, TextOutputFormat.class, Text.class, 
 				Text.class);
 		
 		conf.setMapOutputKeyClass(PairOfIntString.class);
 		conf.setMapOutputValueClass(IntWritable.class);
-//	conf.setCompressMapOutput(true);
-
-		conf.setMapperClass(EntityMentionIndexBuilder.Map.class);
-		conf.setReducerClass(EntityMentionIndexBuilder.Reduce.class);
-
+		
+		conf.setMapperClass(Map.class);
+		conf.setReducerClass(Reduce.class);
+		
 		// Delete the output directory if it exists already.
 		FileSystem.get(conf).delete(new Path(outputPath), true);
 		

@@ -9,7 +9,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
 
-import md.MentionDetection;
 import normalizer.Normalizer;
 
 import org.apache.commons.cli.CommandLine;
@@ -26,8 +25,6 @@ import org.apache.hadoop.filecache.DistributedCache;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.IntWritable;
-import org.apache.hadoop.io.LongWritable;
-import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapred.JobClient;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.MapReduceBase;
@@ -40,8 +37,18 @@ import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 import org.apache.log4j.Logger;
 
+import data.TFIDFEntry;
 import edu.umd.cloud9.collection.wikipedia.WikipediaPage;
 
+/**
+ * Computes a mapping from an entity id to a vector of pairs (term, tf-idf score).
+ * The mapping is spread over multiple files.
+ * This mapping is at best not meant to be loaded in memory because of it's large size. 
+ * As the output is a sequence file, an index of the positions of each entity in the file can be 
+ * computed. Then a tf-idf vector of an entity can be read from disk by seeking at the corresponding
+ * offset. 
+ * To accomplish this another index must be constructed: @See EntityTFIDFIndexBuilder .
+ */
 public class EntityTFIDFBuilder extends Configured implements Tool {
 	private static final Logger LOG = Logger.getLogger(EntityTFIDFBuilder.class);
 	
@@ -50,9 +57,8 @@ public class EntityTFIDFBuilder extends Configured implements Tool {
   };
 
   public static class TFIDFMap extends MapReduceBase 
-  		implements Mapper<IntWritable, WikipediaPage, LongWritable, Text> {
-  	private static LongWritable outputKey = new LongWritable();
-  	private static Text outputValue = new Text();
+  		implements Mapper<IntWritable, WikipediaPage, IntWritable, TFIDFEntry> {
+  	private static final IntWritable outputKey = new IntWritable();
   	private static TermDocumentFrequencyIndex dfIndex;
 
 		@Override
@@ -65,18 +71,18 @@ public class EntityTFIDFBuilder extends Configured implements Tool {
 			}
 		}
 		
-  	/*
-  	 *  Emits:	key = doc id, value = TF vector of pairs (term, tf score)
+  	/**
+  	 *  Emits:	key = doc id, value = TFIDFEntry containing pairs (term, tf-idf score).
   	 */
   	@Override
   	public void map(IntWritable key, WikipediaPage page, 
-  			OutputCollector<LongWritable, Text> output, Reporter reporter) throws IOException {
+  			OutputCollector<IntWritable, TFIDFEntry> output, Reporter reporter) throws IOException {
   		if (!page.isArticle()) {
   			return;
   		}
   		reporter.incrCounter(Counters.PAGES_TOTAL, 1);
   		String normalizedContent = Normalizer.normalizeNoDelimiters(page.getContent());
-  		String[] terms = StringUtils.split(normalizedContent, " \t\f\r\n");
+  		String[] terms = StringUtils.split(normalizedContent, Normalizer.WHITESPACES);
   		HashMap<String, Integer> termFreq = new HashMap<String, Integer>();
 
   		for (String term: terms) {
@@ -87,20 +93,15 @@ public class EntityTFIDFBuilder extends Configured implements Tool {
   			}
   		}
   		
-  		StringBuilder value = new StringBuilder("");
+  		TFIDFEntry outputValue = new TFIDFEntry(termFreq.size());
   		for (Map.Entry<String, Integer> entry : termFreq.entrySet()) {
   			String term = entry.getKey();
   			int tf = entry.getValue();
-  			if (dfIndex.containsKey(term)) {
-  				double idf = MentionDetection.getIDF(term, dfIndex);
-    	    value.append(term + '\t' + (tf * idf) + '\t');
-  			} else {
-  				double idf = MentionDetection.getIDF(term, dfIndex);
-    	    value.append(term + '\t' + (tf * idf) + '\t');
-  			}
+  			double idf = dfIndex.getIDF(term);
+  			outputValue.put(term, tf * idf);
   		}
+  		
 			outputKey.set(Integer.parseInt(page.getDocid()));
-			outputValue.set(value.toString());
 			output.collect(outputKey, outputValue);
   	}
   }
@@ -134,13 +135,14 @@ public class EntityTFIDFBuilder extends Configured implements Tool {
 		}
 
 		Random random = new Random();
-		String tmp = "tmp-" + this.getClass().getCanonicalName() + "-" + random.nextInt(10000);
+		String defaultOutput = "output-" + this.getClass().getCanonicalName() + "-" + 
+				random.nextInt(10000);
 
 		task1(
 				getConf(),
 				cmdline.getOptionValue(INPUT_OPTION),
 				cmdline.getOptionValue(DF_INDEX_OPTION, DEFAULT_DF_INDEX),
-				cmdline.getOptionValue(OUTPUT_OPTION, tmp)
+				cmdline.getOptionValue(OUTPUT_OPTION, defaultOutput)
 		);
 
 		return 0;
@@ -171,7 +173,7 @@ public class EntityTFIDFBuilder extends Configured implements Tool {
 		conf.setOutputFormat(SequenceFileOutputFormat.class);
 		
 		conf.setMapOutputKeyClass(IntWritable.class);
-		conf.setMapOutputValueClass(Text.class);
+		conf.setMapOutputValueClass(TFIDFEntry.class);
 		
 		conf.setMapperClass(TFIDFMap.class);
 		

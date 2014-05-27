@@ -20,7 +20,7 @@ import md.Token;
 import org.apache.commons.io.FilenameUtils;
 import org.xml.sax.SAXException;
 
-/*
+/**
  * Computes mention detection up to keyphraseness: tokenization, ngram forming, and lookup in the 
  * anchor text dictionary. Keyphraseness is not used to filter out mentions.
  * Checks if any of the ground truth annotations are missing from the set of resulting 
@@ -32,10 +32,12 @@ public class VerifyDictionaryMentions {
 	
 	public static void main(String args[]) 
 			throws ParserConfigurationException, SAXException, IOException {
+		System.out.println("VerifyDictionaryMentions");
+		
 		IITBDataset iitb = new IITBDataset(
 				"/home/marinah/wikipedia/enwiki-titles.txt",
 				"/home/marinah/wikipedia/enwiki-redirect-normalized.txt");
-		iitb.load(annotationsFilePath);
+		iitb.load(annotationsFilePath, testFilesFolder, false);
 		System.out.println("Loaded IITB dataset.");
 		
 		MentionIndex mentionIndex = MentionIndex.load(
@@ -48,10 +50,10 @@ public class VerifyDictionaryMentions {
 			String filePath = FilenameUtils.normalize(testFilesFolder + filename);
 			String content = IITBDataset.getFileContent(filePath);
 			MentionDetection md = new MentionDetection(content, mentionIndex, null, null);
-			
+			md.setThreshold(0, true);
 			List<Token> tokens = MentionDetection.tokenizeText(content);
 			List<Ngram> ngrams = md.gatherNgrams(tokens, MentionDetection.NGRAM_SIZE);
-			mentionsFound.put(filename, md.extractMentions(ngrams, ngrams.size()));
+			mentionsFound.put(filename, md.extractMentions(ngrams, tokens));
 		}
 		System.out.println("Gathered mentions.");
 		
@@ -89,7 +91,7 @@ public class VerifyDictionaryMentions {
 				notCanonicalEntity + " out of:" + iitb.getAnnotations().size() + " total annotations");
 	}
 	
-	/*
+	/**
 	 * Returns:
 	 *  1 if mention is present in list
 	 * -1 if a mention with the annotation offset, length and file does not exist

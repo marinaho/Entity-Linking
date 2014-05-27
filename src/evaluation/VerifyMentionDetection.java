@@ -2,13 +2,12 @@ package evaluation;
 
 import iitb.Annotation;
 import iitb.IITBDataset;
-import index.EntityTFIDFIndex;
+import index.MentionEntitiesFrequencyIndex;
 import index.MentionIndex;
-import index.TermDocumentFrequencyIndex;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -18,70 +17,83 @@ import md.Mention;
 import md.MentionDetection;
 
 import org.apache.commons.io.FilenameUtils;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
 import org.xml.sax.SAXException;
 
+/**
+ * Computes maximum possible recall after running mention detection and keeping the top x% scoring
+ * mentions by keyphraseness.
+ */
 public class VerifyMentionDetection {
-	private static String annotationsFilePath = "/home/marinah/input/CSAW_Annotations.xml";
+	private static String annotationsFilePath = "/home/marinah/input/CSAW_Annotations (original).xml";
 	private static String testFilesFolder = "/home/marinah/input/crawledDocs/";
+	private static final String titlesFilePath = "/mnt/local/marinah/wikipedia/enwiki-titles.txt";
+	private static final String redirectsFilePath = 
+			"/mnt/local/marinah/wikipedia/enwiki-redirect-normalized.txt";
+	private static final String mentionIndexPath = 
+			"/mnt/local/marinah/wikipedia/mek-top.txt";
+	private static final String mentionFreqIndexPath = 
+			"/mnt/local/marinah/wikipedia/mek-top-freq.txt";
 	
 	public static void main(String args[]) 
 			throws ParserConfigurationException, SAXException, IOException {
-		IITBDataset iitb = new IITBDataset(
-				"/home/marinah/wikipedia/enwiki-titles.txt",
-				"/home/marinah/wikipedia/enwiki-redirect-normalized.txt");
-		iitb.load(annotationsFilePath);
-		System.out.println("Loaded IITB dataset.");
+		System.out.println("# VerifyMentionDetection");
+		boolean excludeNonCanonical = true; 
 		
-		MentionIndex mentionIndex = MentionIndex.load(
-				"/home/marinah/wikipedia/mention-entity-keyphraseness.txt");
-		System.out.println("Loaded mention index.");
+		IITBDataset iitb = new IITBDataset(titlesFilePath, redirectsFilePath);
+		iitb.load(annotationsFilePath, testFilesFolder, excludeNonCanonical);
+		System.out.println("# Loaded IITB dataset.");
 		
-		EntityTFIDFIndex entityTFIDFIndex = new EntityTFIDFIndex(
-				new Configuration(), "/home/marinah/wikipedia/tf-idf-entity");
-		entityTFIDFIndex.load(new Path("/home/marinah/wikipedia/tf-idf-entity-index.txt"));
-		System.out.println("Loaded tf-idf entity index.");
-		
-		TermDocumentFrequencyIndex dfIndex = TermDocumentFrequencyIndex.load(
-				"/home/marinah/wikipedia/df-index.txt");
-		System.out.println("Loaded term document frequency index.");
+		System.out.println("# Loading mention index:" + mentionFreqIndexPath);
+		MentionEntitiesFrequencyIndex mentionIndex = 
+				MentionEntitiesFrequencyIndex.load(mentionFreqIndexPath);
 
-		// Maps a filename to a list of found mentions.
-		Map<String, List<Mention>> mentionsFound = new HashMap<String, List<Mention>>();
-		for (String filename: iitb.getFilenames()) {
-			String filePath = FilenameUtils.normalize(testFilesFolder + filename);
-			String content = IITBDataset.getFileContent(filePath);
-			MentionDetection md = new MentionDetection(content, mentionIndex, entityTFIDFIndex, dfIndex);
-			mentionsFound.put(filename, md.solve());
-			System.out.println("Found mentions for text: " + filename);
-		}
-		System.out.println("Gathered mentions.");
+		System.out.println("# Threshold | Max Avg Precision | Max Avg Recall | Max F1 score |"
+				+ " Missing annotations | Good | Total found | Total ground truth");
 		
-		int missingMentions = 0, missingEntities = 0, notCanonicalEntity = 0;
-		for (Annotation annotation: iitb.getAnnotations()) {
-			int result = searchByOffsetLengthFile(annotation, mentionsFound);
-			if (result == 1) {
-				continue;
-			}
-			if (result == -1) {
-				++missingMentions;
-			} else if (result == -2) {
-				++missingEntities;
-			} else if (result == -3) {
-				++notCanonicalEntity;
-			}
+		ArrayList<Double> thresholds = new ArrayList<Double>();
+		thresholds.add(0.00005);
+		thresholds.add(0.0001);
+		thresholds.add(0.0005);
+		for (double t = 0.001; t < 0.01; t += 0.001) {
+			thresholds.add(t);
 		}
-
-		System.out.println("Not found mentions:" + missingMentions + " out of:" + 
-				iitb.getAnnotations().size() + " total annotations");
-		System.out.println("Not found mention with entity:" + missingEntities + " out of:" + 
-				iitb.getAnnotations().size() + " total annotations");
-		System.out.println("Ground truth annotations resolved to non-canonical entity:" + 
-				notCanonicalEntity + " out of:" + iitb.getAnnotations().size() + " total annotations");
+		for (double t = 0.01; t <= 1; t += 0.01) {
+			thresholds.add(t);
+		}
+		for (double threshold: thresholds) {
+			double averagePrecision = 0;
+			double averageRecall = 0;
+			int missingAnnotations = 0;
+			int good = 0;
+			int found = 0;
+			
+			for (String filename: iitb.getFilenames()) {
+				String filePath = FilenameUtils.normalize(testFilesFolder + filename);
+				String content = IITBDataset.getFileContent(filePath);
+				
+				MentionDetection md = new MentionDetection(content, mentionIndex, null, null);
+				md.setThreshold(threshold, true);
+				List<Mention> candidateMentions = md.getCandidateMentions(threshold);
+				
+				VerifierMentionDetection verifier = new VerifierMentionDetection();
+				verifier.computeResults(candidateMentions, iitb.getNameAnnotations(filename));
+				averagePrecision += verifier.getPrecision();
+				averageRecall += verifier.getRecall();
+				missingAnnotations += verifier.getNotFoundAnnotations().size();
+				good += verifier.getCorrectAnnotations().size();
+				found += candidateMentions.size();
+			}
+			averagePrecision /= iitb.getNumDocs();
+			averageRecall /= iitb.getNumDocs();
+			double maxF1score = (averagePrecision + averageRecall) / 2;
+			
+			System.out.format("%10.5f %10.2f %10.2f %10.2f %d %d %d %d\n", threshold, 
+					averagePrecision * 100, averageRecall * 100, maxF1score * 100, missingAnnotations, good, 
+					found, iitb.getNameAnnotations().size());
+			}
 	}
 	
-	/*
+	/**
 	 * Returns:
 	 *  1 if mention is present in list
 	 * -1 if a mention with the annotation offset, length and file does not exist

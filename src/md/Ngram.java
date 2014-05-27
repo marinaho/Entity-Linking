@@ -1,13 +1,13 @@
 package md;
 
 /*
- * Ngram (multiple tokens) with offset and length in original text. 
- * Offset and length can be used to compare to ground truth annotations. 
- * Unnormalized ngram can be found in the input text at the given offset and length.
+ * Ngram (multiple tokens) with offset and length in the original text. 
+ * Unnormalized ngram is stored in originalNgram .
  * The normalized ngram has most of the punctuation remove (,; ...), except for some (.! ...).
  */
 public class Ngram {
 	private StringBuilder normalizedNgram;
+	private String originalNgram;
 	private int offset;
 	private int length;
 	
@@ -27,6 +27,10 @@ public class Ngram {
 		return normalizedNgram.toString();
 	}
 	
+	public void setNgram(String ngram) {
+		normalizedNgram = new StringBuilder(ngram);
+	}
+	
 	public int getOffset() {
 		return offset;
 	}
@@ -41,6 +45,14 @@ public class Ngram {
 	
 	public void setLength(int length) {
 		this.length = length;
+	}
+
+	public String getOriginalNgram() {
+		return originalNgram;
+	}
+
+	public void setOriginalNgram(String originalNgram) {
+		this.originalNgram = originalNgram;
 	}
 	
 	public void append(Token token) {

@@ -1,18 +1,18 @@
 package baseline;
 
-/*
- * Edge of the Referent Graph for Entity Linking.
- * Is set between a mention and a candidate entity, or between two entities (candidates for 
- * different mentions).
+import java.math.BigDecimal;
+
+/**
+ * Edge of the Referent Graph for Entity Linking. Encapsulates the weight of the edge.
  */
 public class Edge {
-	double weight;
+	BigDecimal weight;
 	
-	public Edge(double inputWeight) {
+	public Edge(BigDecimal inputWeight) {
 		weight = inputWeight;
 	}
 	
-	public double getWeight() {
+	public BigDecimal getWeight() {
 		return weight;
-	}
+	}	
 }

@@ -1,10 +1,13 @@
 package md;
 
+import index.CandidatesIndex;
 import index.EntityTFIDFIndex;
 import index.MentionIndex;
 import index.TermDocumentFrequencyIndex;
 
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -12,40 +15,68 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
 
+import data.TFIDFEntry;
 import knowledgebase.WikiUtils;
-import edu.umd.cloud9.io.pair.PairOfStringFloat;
 
 public class MentionDetection {
 	public static final int NGRAM_SIZE = 11;
+	// Mentions with more than MAX_CANDIDATES will not be considered.
+	private static final int MAX_CANDIDATES = 2000;
 	// &nbsp occuring in HTML pages gets read as this value. This interferes in tokenization.
 	public static final char NBSP = 160;
 	public static final String DELIMITERS = " \t\n\r\f—/*`\"'()[]{},‘’“”;?_" + NBSP;
 	public static final String DELIMITERS_KEEP = ".!-:";
 	
-	// Mentions are linked if they score in top x% keyphraseness score.
-	private double percentMentions = 0.06;
+	public static boolean skipManyCandidates = false;
+	
+	private double percent = 0.06;
+	private boolean useThreshold = false;
+	
+	private boolean skipZeroLocalCompatibility = false;
 	
 	private String text;
-	private MentionIndex mentionIndex;
+	private CandidatesIndex mentionIndex;
 	private EntityTFIDFIndex entityTFIDFIndex;
 	private TermDocumentFrequencyIndex dfIndex;
 		
-	public MentionDetection(String text, MentionIndex mentionIndex, EntityTFIDFIndex entityTFIDFIndex, 
-			TermDocumentFrequencyIndex dfIndex) {
+	public MentionDetection(String text, CandidatesIndex mentionIndex, 
+			EntityTFIDFIndex entityTFIDFIndex, TermDocumentFrequencyIndex dfIndex) {
 		this.text = text;
 		this.mentionIndex = mentionIndex;
 		this.entityTFIDFIndex = entityTFIDFIndex;
 		this.dfIndex = dfIndex;
 	}
 	
+	public void setSkipZeroLocalCompatibility() {
+		skipZeroLocalCompatibility = true;
+	}
+	
 	public List<Mention> solve() throws IOException {
 		List<Token> tokens = tokenizeText(text);
 		List<Ngram> ngrams = gatherNgrams(tokens, NGRAM_SIZE);
-		int toExtract = (int)(tokens.size() * percentMentions + 1);
-		List<Mention> nameMentions = extractMentions(ngrams, toExtract);
-		computeMentionEntityCompatibilities(nameMentions, tokens);
+		List<Mention> nameMentions = extractMentions(ngrams, tokens);
+		nameMentions = computeLocalCompatibilities(nameMentions, tokens);
 		computeImportance(nameMentions);
 		return nameMentions;
+	}
+	
+	/** Returns the extracted mentions and candidate entities. Local compatibilities are set to 0
+	 *  and importance scores are not computed.
+	 * @param percentMentions
+	 * @return
+	 * @throws IOException
+	 */
+	public List<Mention> getCandidateMentions(double percentMentions) 
+			throws IOException {
+		List<Token> tokens = tokenizeText(text);
+		List<Ngram> ngrams = gatherNgrams(tokens, NGRAM_SIZE);
+		List<Mention> result = extractMentions(ngrams, tokens);
+		for (Mention mention: result) {
+			for (Integer entity: mentionIndex.getCandidateEntities(mention)) {
+				mention.setEntityCompatibilityScore(entity, BigDecimal.ZERO);
+			}
+		}
+		return result;
 	}
 	
 	public static List<Token> tokenizeText(String text) {
@@ -120,7 +151,10 @@ public class MentionDetection {
 			start = (start + 1) % maxSize;
 		}
 
-		
+		for (Ngram ngram: result) {
+			String tokenSpan = text.substring(ngram.getOffset(), ngram.getOffset() + ngram.getLength());
+			ngram.setOriginalNgram(tokenSpan);
+		}
 		return result;
 	}
 	
@@ -129,23 +163,31 @@ public class MentionDetection {
 	 * Searches the ngrams in the mention index. Ranks them by keyphraseness and returns the top
 	 * scoring x% as a map of (mention, candidate entities array).
 	 */
-	public List<Mention> extractMentions(List<Ngram> ngrams, int toExtract) throws IOException {
+	public List<Mention> extractMentions(List<Ngram> ngrams, List<Token> tokens) throws IOException {
 		TreeSet<Mention> keyphrasenessTree = new TreeSet<Mention>(); 
 		
-		for (Ngram inputNgram: ngrams) {
-			String ngram = inputNgram.getNgram();
-			if (ngram.contains("-") && !mentionIndex.containsKey(ngram)) {
-				ngram = ngram.replaceAll(" - ", " ");
+		for (Ngram ngram: ngrams) {
+			String normalizedNgram = ngram.getNgram();
+			if (normalizedNgram.contains(" - ") && !mentionIndex.containsKey(normalizedNgram)) {
+				normalizedNgram = normalizedNgram.replaceAll(" - ", " ");
+				ngram.setNgram(normalizedNgram);
 			}
-			if (mentionIndex.containsKey(ngram)) {
-				Mention mention = new Mention(ngram, inputNgram.getOffset(), inputNgram.getLength());
+			
+			if (mentionIndex.containsKey(normalizedNgram)) {
+				int candidatesCount = mentionIndex.getCandidateEntitiesCount(normalizedNgram);
+				if (skipManyCandidates && candidatesCount > MAX_CANDIDATES) {
+					System.out.println("Skipped " + normalizedNgram + " candidates " + candidatesCount);
+					continue;
+				}
+				Mention mention = new Mention(ngram);
 				mention.computeKeyphrasenessAndDF(mentionIndex);
-				rankMention(mention, keyphrasenessTree, toExtract);
+				if (useThreshold) {
+					rankByThreshold(mention, keyphrasenessTree);
+				} else {
+					int toExtract = Math.max((int)(tokens.size() * percent), 1);
+					rankMention(mention, keyphrasenessTree, toExtract);
+				}
 			} 
-		}
-		
-		for (Mention mention: keyphrasenessTree) {
-			mention.setCandidateEntities(mentionIndex);
 		}
 		
 		return new ArrayList<Mention>(keyphrasenessTree);
@@ -166,34 +208,43 @@ public class MentionDetection {
 		}
 	}	
 	
-	public void computeMentionEntityCompatibilities(List<Mention> mentions, List<Token> tokens) 
-			throws IOException {
-		for (Mention mention: mentions) {
-			Integer[] candidates = mention.getCandidateEntities();
-			Double scores[] = new Double[candidates.length];
-			
-			for (int i = 0; i < candidates.length; ++i) {
-				int candidate = candidates[i];
-				List<String> context = mention.extractContext(tokens);
-				scores[i] = getLocalMentionEntityCompatibility(context, candidate);
-			}		
-			mention.setEntityCompatibilityScores(scores);
+	public void rankByThreshold(Mention mention, TreeSet<Mention> tree) {
+		if (mention.getKeyphraseness() >= percent) {
+			tree.add(mention);
 		}
+	}	
+	
+	public List<Mention>	computeLocalCompatibilities(List<Mention> mentions, List<Token> tokens) {
+		List<Mention> result = new ArrayList<Mention>();
+		for (Mention mention: mentions) {
+			for (Integer entity: mentionIndex.getCandidateEntities(mention)) {
+				BigDecimal score = getLocalMentionEntityCompatibility(mention, entity, tokens);
+				mention.setEntityCompatibilityScore(entity, score);
+			}
+			if (skipZeroLocalCompatibility && 
+					mention.computeSumCompatibilities().compareTo(BigDecimal.ZERO) == 0) {
+				continue;
+			}
+			result.add(mention);
+		}
+		return result;
 	}
 	
-	public double getLocalMentionEntityCompatibility(List<String> context, int entity) {
-		Map<String, Double> tfidfContext = getTFIDFContext(context);
-		Map<String, Double> tfidfEntity = getTFIDFEntity(entity);
+	public BigDecimal getLocalMentionEntityCompatibility(Mention mention, int entity, 
+			List<Token> tokens) {
+		List<String> context = mention.extractContext(tokens);
+		TFIDFEntry tfidfContext = getTFIDFContext(context);
+		TFIDFEntry tfidfEntity = entityTFIDFIndex.getEntityTFIDFVector(entity);
 		return cosineDistance(tfidfContext, tfidfEntity);
 	}
 		
-	public Map<String, Double> getTFIDFContext(List<String> context) {
+	public TFIDFEntry getTFIDFContext(List<String> context) {
 		Map<String, Integer> tfContext = getTFContext(context);
-		Map<String, Double> result = new HashMap<String, Double>();
+		TFIDFEntry result = new TFIDFEntry();
 		for (Map.Entry<String, Integer> entry: tfContext.entrySet()) {
 			String term = entry.getKey();
 			Integer tf = entry.getValue();
-			result.put(term, tf * getIDF(term, dfIndex));
+			result.put(term, tf * dfIndex.getIDF(term));
 		}
 		return result;
 	}
@@ -209,34 +260,23 @@ public class MentionDetection {
 		}
 		return result;
 	}
+	
+	public BigDecimal cosineDistance(Map<String, Double> v1, Map<String, Double> v2) {
 
-	public static double getIDF(String mention, TermDocumentFrequencyIndex dfIndex) {
-		return Math.log((double) WikiUtils.WIKIPEDIA_SIZE / getDF(mention, dfIndex));
-	}
-	
-	public static int getDF(String term, TermDocumentFrequencyIndex dfIndex) {
-		return dfIndex.get(term);
-	}
-	
-	public Map<String, Double> getTFIDFEntity(int entity) {
-		Map<String, Double> result = new HashMap<String, Double>();
-		List<PairOfStringFloat> tfIDFEntity = entityTFIDFIndex.getEntityTFIDFVector(entity);
-		for(PairOfStringFloat entry: tfIDFEntity) {
-			result.put(entry.getLeftElement(), (double) entry.getRightElement());
-		}
-		return result;
-	}
-	
-	public double cosineDistance(Map<String, Double> v1, Map<String, Double> v2) {
-
-		double numerator = 0;
+		BigDecimal numerator = new BigDecimal(0);
 		for (String word: v1.keySet()) {
 			if (v2.containsKey(word)) {
-				numerator += v1.get(word) * v2.get(word);
+				numerator = numerator.add(
+						new BigDecimal(v1.get(word))
+								.multiply(new BigDecimal(v2.get(word))
+						)
+				);
 			}
 		}
 		
-		return numerator / getNorm(v1.values()) / getNorm(v2.values());
+		return numerator
+				.divide(new BigDecimal(getNorm(v1.values())), RoundingMode.HALF_UP)
+				.divide(new BigDecimal(getNorm(v2.values())), RoundingMode.HALF_UP);
 	}
 	
 	public double getNorm(Collection<Double> v) {
@@ -249,11 +289,11 @@ public class MentionDetection {
 	
 	public void computeImportance(List<Mention> mentions) {
 		Double[] tfidf = new Double[mentions.size()];
-		int sum = 0;
+		double sum = 0;
 		for (int pos = 0; pos < mentions.size(); ++pos) {
 			Mention mention = mentions.get(pos);
-			int tf = countOccurences(mention.getNgram(), text); 
-			double idf = Math.log((double) WikiUtils.WIKIPEDIA_SIZE / mention.getDocumentFrequency());
+			int tf = countOccurences(mention.getOriginalNgram(), text); 
+			double idf = Math.log((double) WikiUtils.WIKIPEDIA_DF_SIZE / mention.getDocumentFrequency());
 			tfidf[pos] = tf * idf;
 			sum += tfidf[pos];
 		}
@@ -271,8 +311,14 @@ public class MentionDetection {
 		}
 		return result;
 	}
-	
-	public void setPercentMentionsToExtract(double percent) {
-		percentMentions = percent;
+
+	/**
+	 * In case a threshold is set, the selected mentions will be the ones with keyphraseness >= 
+	 * threshold. Otherwise the top percentMentions% by keyphraseness score in each document will
+	 * be linked.
+	 */
+	public void setThreshold(double value, boolean useThreshold) {
+		this.useThreshold = useThreshold;
+		this.percent = value;
 	}
 }

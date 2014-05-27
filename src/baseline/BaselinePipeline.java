@@ -12,10 +12,12 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.HashMap;
 import java.util.Random;
+import java.util.Set;
 
 import javax.xml.parsers.ParserConfigurationException;
+
+import md.MentionDetection;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
@@ -50,6 +52,7 @@ import evaluation.Verifier;
 
 /*
  * Shards testing documents and runs Entity Linking using Random Graph Walk method.
+ * Not tested/used yet. Seems that distributed caching takes a long time to manage all indices.
  */
 public class BaselinePipeline extends Configured implements Tool {
 private static final Logger LOG = Logger.getLogger(BaselinePipeline.class);
@@ -65,6 +68,7 @@ private static final Logger LOG = Logger.getLogger(BaselinePipeline.class);
   	private static EntityTFIDFIndex entityTFIDFIndex;
   	private static TermDocumentFrequencyIndex dfIndex;
   	private static IITBDataset iitb;
+  	private static String testFilesPath;
   	
 		@Override
 		public void configure(JobConf job) {
@@ -75,6 +79,7 @@ private static final Logger LOG = Logger.getLogger(BaselinePipeline.class);
 			String annotationsFilePath = job.get(ANNOTATIONS_FILE_SYMLINK);
 			String titlesIndexPath = job.get(TITLES_FILE_SYMLINK);
 			String redirectsIndexPath = job.get(REDIRECTS_FILE_SYMLINK);
+			testFilesPath = job.get(TEST_FILES_PATH);
 			
 			try {
 				mentionIndex = MentionIndex.load(mentionIndexPath);
@@ -83,7 +88,7 @@ private static final Logger LOG = Logger.getLogger(BaselinePipeline.class);
 				entityTFIDFIndex.load(new Path(tfidfEntitiesIndexPath));
 				dfIndex = TermDocumentFrequencyIndex.load(dfTermIndexPath);
 				iitb = new IITBDataset(titlesIndexPath, redirectsIndexPath);
-				iitb.load(annotationsFilePath);
+				iitb.load(annotationsFilePath, testFilesPath, true);
 			} catch (IOException e1) {
 				e1.printStackTrace();
 			} catch (ParserConfigurationException e) {
@@ -101,11 +106,13 @@ private static final Logger LOG = Logger.getLogger(BaselinePipeline.class);
   			OutputCollector<Text, Text> output, Reporter reporter) throws IOException {
   		reporter.getCounter(Counters.PAGES_TOTAL).increment(1);
   			
-  		RandomGraphWalk baseline = new RandomGraphWalk(filename.toString(), content.toString(), 
-  				mentionIndex, entityLinksIndex, entityTFIDFIndex, dfIndex);
-  		HashMap<Annotation, Double> solution = baseline.solve();
-  		Verifier verifier = new Verifier();
-  		verifier.computeResults(solution.keySet(), iitb.getAnnotations(filename.toString()));
+  		MentionDetection md = new MentionDetection(content.toString(), mentionIndex, entityTFIDFIndex, 
+  				dfIndex);
+  		RandomGraphWalk baseline = new RandomGraphWalk(entityLinksIndex);
+  		baseline.solve(md.solve());
+  		Set<Annotation> solution = baseline.getSolutionAnnotations(filename.toString());
+  		Verifier<Annotation> verifier = new Verifier<Annotation>();
+  		verifier.computeResults(solution, iitb.getAnnotations(filename.toString()));
   		output.collect(filename, new Text(verifier.toString()));
   	}
   }
@@ -133,7 +140,7 @@ private static final Logger LOG = Logger.getLogger(BaselinePipeline.class);
 	// Default location of ground truth annotations, used when ANNOTATIONS_OPTION is not specified.
 	private static final String DEFAULT_ANNOTATIONS_FILE = "/CSAW_Annotations.xml";
 	private static final String DEFAUL_ANCHOR_TEXT_FILE = "/mention-entity-index.txt";
-	private static final String DEFAULT_ENTITY_LINKS_FILE = "/entity-entity-index.txt"; 
+	private static final String DEFAULT_ENTITY_LINKS_FILE = "/entity-entity-index.txt";
 	private static final String DEFAULT_TFIDF_ENTITIES_FILE = "/tf-idf-entity-index.txt";
 	private static final String DEFAULT_DF_TERM_FILE = "/df-index.txt";
 	private static final String DEFAULT_TFIDF_ENTITIES_PATH = "tf-idf-entity";
@@ -148,6 +155,8 @@ private static final Logger LOG = Logger.getLogger(BaselinePipeline.class);
 	private static final String ANNOTATIONS_FILE_SYMLINK = "a";
 	private static final String TITLES_FILE_SYMLINK = "tt";
 	private static final String REDIRECTS_FILE_SYMLINK = "r";
+	
+	private static final String TEST_FILES_PATH = "/crawledDocs/";
 	
 	@SuppressWarnings("static-access")
 	@Override
@@ -272,7 +281,7 @@ private static final Logger LOG = Logger.getLogger(BaselinePipeline.class);
 			String entityTFIDFDirectoryPath, // Directory containing entity tf-idf index files. 
 			String inputFile, // File created by the createSequenceFile()
 			String mentionIndexFile, 
-			String entityLinksIndexFile, 
+			String entityLinksIndexFile,
 			String tfidfEntitiesFile, 
 			String termDFFile, 
 			String annotationsFile, 
@@ -338,6 +347,7 @@ private static final Logger LOG = Logger.getLogger(BaselinePipeline.class);
 		conf.set(ANNOTATIONS_FILE_SYMLINK, ANNOTATIONS_FILE_SYMLINK);
 		conf.set(TITLES_FILE_SYMLINK, TITLES_FILE_SYMLINK);
 		conf.set(REDIRECTS_FILE_SYMLINK, REDIRECTS_FILE_SYMLINK);
+		conf.set(TEST_FILES_PATH, TEST_FILES_PATH);
 		
 		JobClient.runJob(conf);
 	}

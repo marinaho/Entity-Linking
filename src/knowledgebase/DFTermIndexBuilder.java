@@ -2,6 +2,7 @@ package knowledgebase;
 
 import java.io.IOException;
 import java.net.URISyntaxException;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Random;
@@ -38,6 +39,11 @@ import org.apache.log4j.Logger;
 
 import edu.umd.cloud9.collection.wikipedia.WikipediaPage;
 
+/**
+ * Constructs an index of pairs (term, document frequency).
+ * Only single word terms are considered. Punctuation is removed.
+ * This can be loaded into memory by using @See index.TermDocumentFrequencyIndex .
+ */
 public class DFTermIndexBuilder extends Configured implements Tool {
 	private static final Logger LOG = Logger.getLogger(DFTermIndexBuilder.class);
 	
@@ -47,27 +53,24 @@ public class DFTermIndexBuilder extends Configured implements Tool {
 
   public static class Map extends MapReduceBase 
   		implements Mapper<IntWritable, WikipediaPage, Text, IntWritable> {
-  	private static Text outputKey = new Text();
-  	private static IntWritable outputOne = new IntWritable(1);
+  	private static final Text outputKey = new Text();
+  	private static final IntWritable outputOne = new IntWritable(1);
 
-  	/*
+  	/**
   	 *  Emits:	key = term, value = 1
   	 */
   	@Override
-  	public void map(IntWritable key, WikipediaPage page, 
-  			OutputCollector<Text, IntWritable> output, Reporter reporter) throws IOException {
+  	public void map(IntWritable key, WikipediaPage page, OutputCollector<Text, IntWritable> output, 
+  			Reporter reporter) throws IOException {
   		if (!page.isArticle()) {
   			return;
   		}
   		reporter.incrCounter(Counters.PAGES_TOTAL, 1);
-  		String normalizedContent = Normalizer.normalizeNoDelimiters(page.getContent());
-  		String tokens[] = StringUtils.split(normalizedContent, " \t\f\n\r");
-  		Set<String> termSet = new HashSet<String>();
- 
-  		for (String token: tokens) {
-  			termSet.add(token);
-  		}
   		
+  		String normalizedContent = Normalizer.normalizeNoDelimiters(page.getContent());
+  		String tokens[] = StringUtils.split(normalizedContent, Normalizer.WHITESPACES);
+  		Set<String> termSet = new HashSet<String>(Arrays.asList(tokens));
+
   		for (String term: termSet) {
   			outputKey.set(term);
   			output.collect(outputKey, outputOne);
@@ -75,9 +78,13 @@ public class DFTermIndexBuilder extends Configured implements Tool {
   	}
   }
 
+  /**
+   * Emits: key = term, value = document frequency
+   * Used as combiner (for efficiency) and reducer.
+   */
   public static class Reduce extends MapReduceBase 
   		implements Reducer<Text, IntWritable, Text, IntWritable> {
-  	IntWritable outputValue = new IntWritable();
+  	private static final IntWritable outputValue = new IntWritable();
   	
   	@Override
   	public void reduce(Text key, Iterator<IntWritable> values,
@@ -92,7 +99,10 @@ public class DFTermIndexBuilder extends Configured implements Tool {
   }
 
 	private static final String INPUT_OPTION = "input";
+	private static final String NUM_REDUCERS_OPTION = "num_reducers";
 	private static final String OUTPUT_OPTION = "output";
+	
+	private static final int DEFAULT_NUM_REDUCERS = 1;
 
 	@SuppressWarnings("static-access")
 	@Override
@@ -100,6 +110,8 @@ public class DFTermIndexBuilder extends Configured implements Tool {
 		Options options = new Options();
 		options.addOption(OptionBuilder.withArgName("path")
 				.hasArg().withDescription("wikipedia sequence file").isRequired().create(INPUT_OPTION));
+		options.addOption(OptionBuilder.withArgName("num_reducers")
+				.hasArg().withDescription("number of reducers").create(NUM_REDUCERS_OPTION));
 		options.addOption(OptionBuilder.withArgName("path")
 				.hasArg().withDescription("output").create(OUTPUT_OPTION));
 
@@ -114,19 +126,26 @@ public class DFTermIndexBuilder extends Configured implements Tool {
 			return -1;
 		}
 
+		Integer num_reducers = 
+				cmdline.hasOption(NUM_REDUCERS_OPTION) ? 
+						Integer.parseInt(cmdline.getOptionValue(NUM_REDUCERS_OPTION)) : 
+						DEFAULT_NUM_REDUCERS;
+						
 		Random random = new Random();
-		String tmp = "tmp-" + this.getClass().getCanonicalName() + "-" + random.nextInt(10000);
+		String defaultOutput = "tmp-" + this.getClass().getCanonicalName() + "-" + 
+				random.nextInt(10000);
 
 		task1(
 				getConf(),
 				cmdline.getOptionValue(INPUT_OPTION), 
-				cmdline.getOptionValue(OUTPUT_OPTION, tmp)
+				cmdline.getOptionValue(OUTPUT_OPTION, defaultOutput),
+				num_reducers
 		);
 
 		return 0;
 	}
 	
-	public void task1(Configuration config, String inputPath, String outputPath) 
+	public void task1(Configuration config, String inputPath, String outputPath, int num_reducers) 
 			throws IOException, URISyntaxException {
 		LOG.info("Extracting document frequency index...");
 		LOG.info(" - input: " + inputPath);
@@ -142,6 +161,8 @@ public class DFTermIndexBuilder extends Configured implements Tool {
 		);
 		conf.setJarByClass(DFTermIndexBuilder.class);
 
+		conf.setNumReduceTasks(num_reducers);
+		
 		SequenceFileInputFormat.addInputPath(conf, new Path(inputPath));
 		TextOutputFormat.setOutputPath(conf, new Path(outputPath));
 		
@@ -152,7 +173,7 @@ public class DFTermIndexBuilder extends Configured implements Tool {
 		conf.setMapOutputValueClass(IntWritable.class);
 
 		conf.setOutputKeyClass(Text.class);
-		conf.setOutputValueClass(Text.class);
+		conf.setOutputValueClass(IntWritable.class);
 		
 		conf.setMapperClass(Map.class);
 		conf.setCombinerClass(Reduce.class);

@@ -1,30 +1,32 @@
 package evaluation;
 
-import iitb.Annotation;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
-public class Verifier {
+/**
+ * From a set on annotated token spans and ground truth annotations computes precision, recall and
+ * lists of correct, wrong and unfound annotations. 
+ */
+public class Verifier<T> {
 	private double precision;
 	private double recall;
-	List<Annotation> correctAnnotations;
-	List<Annotation> wrongAnnotations;
-	List<Annotation> notFoundAnnotations;
+	List<T> correctAnnotations;
+	List<T> wrongAnnotations;
+	List<T> notFoundAnnotations;
 	
 	public Verifier() {
-		correctAnnotations = new ArrayList<Annotation>();
-		wrongAnnotations =  new ArrayList<Annotation>();
-		notFoundAnnotations = new ArrayList<Annotation>();
+		correctAnnotations = new ArrayList<T>();
+		wrongAnnotations =  new ArrayList<T>();
+		notFoundAnnotations = new ArrayList<T>();
 	}
 	
-	public void computeResults(Set<Annotation> solution, Set<Annotation> groundTruth) {
+	public void computeResults(Set<T> solution, Set<T> groundTruth) {
 		int toFind = groundTruth.size();
 		int found = solution.size();
 		int good = 0;
 		
-		for (Annotation annotation: solution) {
+		for (T annotation: solution) {
 			if (groundTruth.contains(annotation)) {
 				++good;
 				correctAnnotations.add(annotation);
@@ -34,14 +36,14 @@ public class Verifier {
 			
 		}
 		
-		for (Annotation annotation: groundTruth) {
+		for (T annotation: groundTruth) {
 			if (!solution.contains(annotation)) {
 				notFoundAnnotations.add(annotation);
 			}
 		}
 		
-		precision = (double) good / found;
-		recall = (double) good / toFind;
+		precision = found > 0 ? (double) good / found : 1;
+		recall = toFind > 0 ? (double) good / toFind : 1;
 	}
 	
 	public double getPrecision() {
@@ -52,15 +54,15 @@ public class Verifier {
 		return recall;
 	}
 	
-	public List<Annotation> getCorrectAnnotations() {
+	public List<T> getCorrectAnnotations() {
 		return correctAnnotations;
 	}
 	
-	public List<Annotation> getWrongAnnotations() {
+	public List<T> getWrongAnnotations() {
 		return wrongAnnotations;
 	}
 	
-	public List<Annotation> getNotFoundAnnotations() {
+	public List<T> getNotFoundAnnotations() {
 		return notFoundAnnotations;
 	}
 	

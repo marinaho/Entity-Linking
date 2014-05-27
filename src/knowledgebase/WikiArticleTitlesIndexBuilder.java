@@ -30,7 +30,7 @@ import org.apache.log4j.Logger;
 
 import edu.umd.cloud9.collection.wikipedia.WikipediaPage;
 
-/* 
+/**
  * Pipeline that extracts a list of wikipedia article titles from wikipedia dump repacked in 
  * sequence file format.
  * 1. Run steps 1-2 & 5 from ExtractEntityMentionPipeline.
@@ -43,17 +43,21 @@ public class WikiArticleTitlesIndexBuilder extends Configured implements Tool {
 	
 	public static class Map extends MapReduceBase implements 
 			Mapper<IntWritable, WikipediaPage, Text, Text> {
-		Text outputValue = new Text();
+		private static final Text outputKey = new Text();
+		private static final Text outputValue = new Text();
 		
-		// Emit: key = article title, filter out redirects, disambiguation, list and category pages.
+		/**
+		 *  Emit: key = article title, filter out redirects, disambiguation, list and category pages.
+		 */
 		public void map(IntWritable key, WikipediaPage p, 
 				OutputCollector<Text, Text> output, Reporter reporter) throws IOException {
-			if (!p.isArticle() || p.isRedirect() || p.isDisambiguation() || WikiUtils.isCategoryPage(p.getTitle()) ||
-					WikiUtils.isListPage(p.getTitle())) 
+			String title = p.getTitle();
+			if (!p.isArticle() || p.isRedirect() || p.isDisambiguation() || 
+					WikiUtils.isCategoryPage(title) ||WikiUtils.isListPage(title)) 
 				return;
-			
+			outputKey.set(title);
 			outputValue.set(p.getDocid());
-			output.collect(new Text(p.getTitle()), outputValue);
+			output.collect(outputKey, outputValue);
 		}
 	}
 	
@@ -123,7 +127,8 @@ public class WikiArticleTitlesIndexBuilder extends Configured implements Tool {
 		}
 
 		Random random = new Random();
-		String tmp = "tmp-" + this.getClass().getCanonicalName() + "-" + random.nextInt(10000);
+		String defaultOutput = "output-" + this.getClass().getCanonicalName() + "-" + 
+				random.nextInt(10000);
 
 		Integer num_reducers = 
 				cmdline.hasOption(NUM_REDUCERS_OPTION) ? 
@@ -133,7 +138,7 @@ public class WikiArticleTitlesIndexBuilder extends Configured implements Tool {
 		task(
 				getConf(),
 				cmdline.getOptionValue(INPUT_OPTION), 
-				cmdline.getOptionValue(OUTPUT_OPTION, tmp),
+				cmdline.getOptionValue(OUTPUT_OPTION, defaultOutput),
 				num_reducers
 		);
 

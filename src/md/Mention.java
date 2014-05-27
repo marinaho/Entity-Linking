@@ -1,12 +1,16 @@
 package md;
 
-import index.MentionIndex;
+import iitb.IITBDataset;
+import index.CandidatesIndex;
 
+import java.io.IOException;
+import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
-import edu.umd.cloud9.io.pair.PairOfIntFloat;
 import edu.umd.cloud9.io.pair.PairOfInts;
 
 /*
@@ -16,25 +20,32 @@ import edu.umd.cloud9.io.pair.PairOfInts;
  * unique negative id.
  */
 public class Mention implements Comparable<Mention> {
-	public static final int WINDOW_SIZE = 50;
-	
-	private static int ID = 0;
+	public static int WINDOW_SIZE = 50;
 	
 	private String ngram;
+	private String originalNgram; // Unnormalized.
 	private int offset;
 	private int length;
 	private double keyphraseness;
-	private Integer[] candidateEntities;
-	private Double[] entityCompatibilityScores;
+	private HashMap<Integer, BigDecimal> candidates;
 	private double importance;
 	private int df;
-	private int id;
+	// Optional.
+	private String filename = "";
 	
 	public Mention(String ngram, int offset, int length) {
 		this.ngram = ngram;
 		this.offset = offset;
 		this.length = length;
-		id = --ID;
+		this.candidates = new HashMap<Integer, BigDecimal>();
+	}
+	
+	public Mention(Ngram ngram) {
+		this.ngram = ngram.getNgram();
+		this.originalNgram = ngram.getOriginalNgram();
+		this.offset = ngram.getOffset();
+		this.length = ngram.getLength();
+		this.candidates = new HashMap<Integer, BigDecimal>();
 	}
 	
 	public String getNgram() {
@@ -49,28 +60,32 @@ public class Mention implements Comparable<Mention> {
 		return length;
 	}
 	
+	public String getOriginalNgram() {
+		return originalNgram;
+	}
+	
+	public void setOriginalNgram(String originalNgram) {
+		this.originalNgram = originalNgram;
+	}
+	
 	public double getKeyphraseness() {
 		return keyphraseness;
 	}
 	
-	public Integer[] getCandidateEntities() {
-		return candidateEntities;
+	public Set<Integer> getCandidateEntities() {
+		return candidates.keySet();
 	}
 	
-	public void setCandidateEntities(Integer[] entities) {
-		candidateEntities = entities;
+	public BigDecimal getEntityCompatibilityScore(Integer entity) {
+		return candidates.get(entity);
 	}
 	
-	public void setCandidateEntities(MentionIndex mentionEntityIndex) {
-		setCandidateEntities(mentionEntityIndex.getCandidateEntities(ngram));
+	public void setEntityCompatibilityScore(Integer entity, BigDecimal score) {
+		candidates.put(entity, score);
 	}
 	
-	public Double[] getEntityCompatibilityScores() {
-		return entityCompatibilityScores;
-	}
-	
-	public void setEntityCompatibilityScores(Double[] scores) {
-		entityCompatibilityScores = scores;
+	public int getCandidatesCount() {
+		return candidates.size();
 	}
 	
 	public double getImportance() {
@@ -89,44 +104,73 @@ public class Mention implements Comparable<Mention> {
 		df = value;
 	}
 	
-	public int getID() {
-		return id;
+	public String getFilename() {
+		return filename;
 	}
 	
-	public void computeKeyphrasenessAndDF(MentionIndex mentionEntityIndex) {
+	public void setFilename(String filename) {
+		this.filename = filename;
+	}
+	
+	public String getContext(String filePath) throws IOException {
+		String content = IITBDataset.getFileContent(filePath);
+		return content.substring(
+				Math.max(0, offset - 50), 
+				Math.min(offset + length + 50, content.length())
+		);
+	}
+	
+	public void computeKeyphrasenessAndDF(CandidatesIndex mentionEntityIndex) {
 		PairOfInts pair = mentionEntityIndex.getKeyphraseness(ngram);
 		df = pair.getRightElement();
 		keyphraseness = (double) pair.getLeftElement() / df;
 	}
 	
-	public PairOfIntFloat[] getEntitiesAndScores() {
-		PairOfIntFloat[] result = new PairOfIntFloat[candidateEntities.length];
-		for (int i = 0; i < candidateEntities.length; ++i) {
-			result[i] = new PairOfIntFloat(
-					candidateEntities[i], 
-					entityCompatibilityScores[i].floatValue());
+	public BigDecimal computeSumCompatibilities() {
+		BigDecimal result = BigDecimal.ZERO;
+		for (BigDecimal score: candidates.values()) {
+			result = result.add(score);
 		}
 		return result;
 	}
 	
-	/*
+	public Set<Map.Entry<Integer, BigDecimal>> getEntitiesAndScores() {
+		return candidates.entrySet();
+	}
+	
+	/**
 	 * Extracts the tokens near the mention at most WINDOW_SIZE distance.
 	 * @param allContext List of input tokens in ascending order by offset.
 	 */
 	public List<String> extractContext(List<Token> allContext) {
-		int startPos = -1, endPos = allContext.size() - 1;
-		for (int i = 0; i < allContext.size(); ++i) {
-			Token token = allContext.get(i);
-			if (startPos == -1 && token.getOffset() >= offset - WINDOW_SIZE) {
-				startPos = i;
-			} else if (token.getOffset() > offset + WINDOW_SIZE) {
-				endPos = i - 1;
+		int start = 0;
+		int end = allContext.size() - 1;
+		int middle = (start + end + 1) / 2;
+		while (start < end) {
+			if (allContext.get(middle).getOffset() == offset) {
 				break;
+			} else if (allContext.get(middle).getOffset() > offset) {
+				end = middle - 1;
+			} else {
+				start = middle;
 			}
+			middle = (start + end + 1) / 2;
 		}
-		
-		List<String> result = new ArrayList<String>();
-		for (Token token: allContext.subList(startPos, endPos + 1)) {
+
+		int fromIndex, toIndex;
+		if (middle - WINDOW_SIZE / 2 < 0) {
+			fromIndex = 0;
+			toIndex = Math.min(allContext.size(), fromIndex + WINDOW_SIZE);
+		} else if (middle + WINDOW_SIZE / 2 >= allContext.size()){
+			toIndex = allContext.size();
+			fromIndex = Math.max(0, toIndex - WINDOW_SIZE);
+		} else {
+			fromIndex = middle - WINDOW_SIZE / 2;
+			toIndex = fromIndex + WINDOW_SIZE;
+		}
+
+		ArrayList<String> result = new ArrayList<String>();
+		for (Token token: allContext.subList(fromIndex, toIndex)) {
 			result.add(token.getToken());
 		}
 		return result;
@@ -186,9 +230,9 @@ public class Mention implements Comparable<Mention> {
 	
 	@Override
 	public String toString() {
-		return "ngram:" + ngram + " offset: " + offset + " length:" + length + 
-				" candidate entities:" + Arrays.toString(candidateEntities) + 
-				" compatibility scores:" + Arrays.toString(entityCompatibilityScores) + 
+		return "ngram:" + ngram + " offset: " + offset + " length:" + length + " original ngram:" + 
+				originalNgram + " candidate entities:" + candidates.keySet() + 
+				" compatibility scores:" + candidates.values() + 
 				" keyphraseness:" + keyphraseness + " document frequency:" + df; 
 	}
 }

@@ -11,8 +11,10 @@ import org.xml.sax.Attributes;
 import org.xml.sax.SAXException;
 import org.xml.sax.helpers.DefaultHandler;
 
-/*
- * Parses the annotations file from the IITB dataset into a map of (docName, annotations list).
+import debug.Spot;
+
+/**
+ * Parses the annotations file from the IITB dataset into a set of annotations.
  * Annotations with no coresponding entity are skipped.
  */
 public class AnnotationsParserHandler extends DefaultHandler {
@@ -23,11 +25,14 @@ public class AnnotationsParserHandler extends DefaultHandler {
 	private static final String LENGTH_TAG = "length";
 	private static final String ANNOTATION_TAG = "annotation";
 	
+	private boolean skipNonCanonical = true;
+	
 	boolean isDocName;
 	boolean isEntity;
 	boolean isOffset;
 	boolean isLength;
 	
+	private Set<Spot> spots;
 	private Set<Annotation> annotations;
 	private Set<String> filenames;
 	
@@ -39,12 +44,15 @@ public class AnnotationsParserHandler extends DefaultHandler {
 	private TitlesIndex titlesIndex;
 	private RedirectPagesIndex redirectIndex;
  
-	public AnnotationsParserHandler(String titlesIndexPath, String redirectIndexPath) 
-			throws IOException {
-		annotations = new HashSet<Annotation>();
-		filenames = new HashSet<String>();
+	public AnnotationsParserHandler(
+			String titlesIndexPath, String redirectIndexPath, boolean skipNonCanonical) 
+					throws IOException {
+		this.spots = new HashSet<Spot>();
+		this.annotations = new HashSet<Annotation>();
+		this.filenames = new HashSet<String>();
 		this.titlesIndex = TitlesIndex.load(titlesIndexPath);
 		this.redirectIndex = RedirectPagesIndex.load(redirectIndexPath);
+		this.skipNonCanonical = skipNonCanonical;
 	}
 	
 	public void startElement(String uri, String localName,	String qName, Attributes attributes) 
@@ -53,9 +61,11 @@ public class AnnotationsParserHandler extends DefaultHandler {
 		switch (qName) {
 			case DOC_TAG:
 				isDocName = true;
+				docName = "";
 				break;
 			case ENTITY_TAG:
 				isEntity = true;
+				entityName = "";
 				break;
 			case OFFSET_TAG:
 				isOffset = true;
@@ -70,14 +80,18 @@ public class AnnotationsParserHandler extends DefaultHandler {
 		
 		// Annotations with no corresponding entity are skipped.
 		if (qName.equals(ANNOTATION_TAG) && !entityName.equals("")) {
-			int entityId = titlesIndex.getTitleId(redirectIndex.getRedirect(entityName));
-			if (entityId == -1) {
+			int entityId = titlesIndex.getTitleId(redirectIndex.getCanonicalURL(entityName));
+			if (entityId == TitlesIndex.NOT_CANONICAL_TITLE && skipNonCanonical) {
 				return;
 			}
-			Annotation annotation = new Annotation(entityId, offset, length, docName);		
+			Annotation annotation = new Annotation(entityId, offset, length, docName);
+			Spot spot = new Spot(annotation);
+			if (spots.contains(spot)) {
+				return;
+			}
+			spots.add(spot);
 			annotations.add(annotation);
 			filenames.add(docName);
-			docName = entityName = "";
 		}
 	}
 	
@@ -101,4 +115,3 @@ public class AnnotationsParserHandler extends DefaultHandler {
 		return filenames;
 	}
 }
-

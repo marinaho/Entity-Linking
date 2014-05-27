@@ -33,34 +33,44 @@ import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 import org.apache.log4j.Logger;
 
+import com.google.common.base.Joiner;
+
 import edu.umd.cloud9.io.pair.PairOfIntString;
+import edu.umd.cloud9.io.pair.PairOfInts;
 
 /*
  * Puts together in one file: mention \t keyphraseness \t candidate entities.
+ * Uses the two indices computed by @See knowledgebase.EntityMentionIndexBuilder and
+ * @See knowledgebase.KeyphrasenessIndexBuilder .
  */
 public class MentionEntitiesKeyphrasenessIndexBuilder extends Configured implements Tool {
-	private static final Logger LOG = Logger.getLogger(EntityMentionIndexBuilder.class);
+	private static final Logger LOG = Logger.getLogger(
+			MentionEntitiesKeyphrasenessIndexBuilder.class);
 
 	private static final String INPUT_ENTITIES_OPTION = "input_entities";
 	private static final String INPUT_KEYPHRASENESS_OPTION = "input_keyphraseness";
 	private static final String OUTPUT_OPTION = "output";
 	
+	public static final String SEPARATOR = "\t";
+	
 	public static class KeyphrasenessMapper extends MapReduceBase implements 
 			Mapper<LongWritable, Text, Text, PairOfIntString> {
-		Text outputKey = new Text();
+		private static final Text outputKey = new Text();
+		private static final PairOfIntString outputValue = new PairOfIntString();
 		
 		// Emit: key = mention; value = (1, candidate entities)
 		public void map(LongWritable key, Text value, OutputCollector<Text, PairOfIntString> output, 
 				Reporter reporter) throws IOException {
 			String[] parts = value.toString().split("\t", 2);
 			outputKey.set(parts[0]);
-			output.collect(outputKey, new PairOfIntString(1, parts[1]));
+			outputValue.set(1, parts[1]);
+			output.collect(outputKey, outputValue);
 		}
 	}
 	
 	public static class CandidateEntitiesMapper extends MapReduceBase implements 
 			Mapper<LongWritable, Text, Text, PairOfIntString> {
-		Text outputKey = new Text();
+		private static final Text outputKey = new Text();
 
 		// Emit: key = mention; value = (2, candidate entities)
 		public void map(LongWritable key, Text value, OutputCollector<Text, PairOfIntString> output, 
@@ -88,13 +98,20 @@ public class MentionEntitiesKeyphrasenessIndexBuilder extends Configured impleme
 			}
 			
 			if (!candidates.equals("") && !keyphraseness.equals("")) {
-				Pattern pattern = Pattern.compile("\\((\\d+),\\s+(\\d+)");
-				Matcher matcher = pattern.matcher(keyphraseness);
-				matcher.find();
-				int linked = Integer.parseInt(matcher.group(1));
-				int total = Integer.parseInt(matcher.group(2));
-				output.collect(key, new Text(linked + "\t" + total + "\t" + candidates));
+				PairOfInts keyphrasenessPair = extractKeyphraseness(keyphraseness);
+				int linked = keyphrasenessPair.getLeftElement();
+				int total = keyphrasenessPair.getRightElement();
+				output.collect(key, new Text(Joiner.on(SEPARATOR).join(linked, total, candidates)));
 			}
+		}
+		
+		public PairOfInts extractKeyphraseness(String text) {
+			Pattern pattern = Pattern.compile("\\((\\d+),\\s+(\\d+)");
+			Matcher matcher = pattern.matcher(text);
+			matcher.find();
+			int linked = Integer.parseInt(matcher.group(1));
+			int total = Integer.parseInt(matcher.group(2));
+			return new PairOfInts(linked, total);
 		}
 	}
 	
@@ -176,5 +193,5 @@ public class MentionEntitiesKeyphrasenessIndexBuilder extends Configured impleme
 	public static void main(String[] args) throws Exception {
 		ToolRunner.run(new MentionEntitiesKeyphrasenessIndexBuilder(), args);
 	}
-
 }
+

@@ -1,14 +1,25 @@
 package iitb;
 
-/*
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+
+import md.Mention;
+
+/**
  *  Wikipedia entity annotation for a token span.
- *  The token span can be found in the specified file with the given offset and length.
+ *  The token span can be found in the specified file by using the given offset and length.
  */
 public class Annotation {
 	private int entity;
 	private String filename;
 	private int offset;
 	private int length;
+	
+	private String tokenSpan;
+	private String context;
 	
 	public Annotation(int entity, int offset, int length, String filename) {
 		this.entity = entity;
@@ -33,10 +44,37 @@ public class Annotation {
 		return filename;
 	}
 	
+	public String getTokenSpan(String filePath) throws IOException {
+		if (tokenSpan == null) {
+			computeTokenSpanAndContext(filePath);
+		}
+		return tokenSpan;
+	}
+	
+	public String getContext(String filePath) throws IOException {
+		if (context == null) {
+			computeTokenSpanAndContext(filePath);
+		}
+		return context;
+	}
+	
+	public void computeTokenSpanAndContext(String filePath) throws IOException {
+		String content = IITBDataset.getFileContent(filePath);
+		tokenSpan = content.substring(offset, offset + length);
+		context = content.substring(
+				Math.max(0, offset - 50), 
+				Math.min(offset + length + 50, content.length())
+		);
+	}
+	
+	public NameAnnotation toNameAnnotation(String filePath) throws IOException {
+		String tokenSpan = getTokenSpan(filePath);
+		return new NameAnnotation(tokenSpan, entity, filename);
+	}
+	
 	@Override
 	public String toString() {
-		return "entity:" + entity + " offset:" + offset + " length:" + length + 
-				" filename:" + filename;
+		return "entity:" + entity + " offset:" + offset + " length:" + length + " filename:" + filename;
 	}
 	
 	@Override
@@ -56,7 +94,16 @@ public class Annotation {
 	
 	@Override
 	public int hashCode() {
-		return new Integer(offset).hashCode() + new Integer(length).hashCode() + filename.hashCode() +
-				new Integer(entity).hashCode();
+		return entity + offset + length + filename.hashCode();
+	}
+	
+	public static Set<Annotation> getSolution(HashMap<Mention, Integer> solution, String filename) {
+		Set<Annotation> annotations = new HashSet<Annotation>();
+		for (Map.Entry<Mention, Integer> entry: solution.entrySet()) {
+			Mention mention = entry.getKey();
+			int entity = entry.getValue();
+			annotations.add(new Annotation(entity, mention.getOffset(), mention.getLength(), filename));
+		}
+		return annotations;
 	}
 }

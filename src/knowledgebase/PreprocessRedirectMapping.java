@@ -5,9 +5,11 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.io.PrintWriter;
 
+import com.google.common.base.Joiner;
+
 import normalizer.Normalizer;
 
-/*
+/**
  * Processes the redirect pages mapping obtained by https://code.google.com/p/wikipedia-redirect/
  * Fixes encodings and transforms titles to canonical forms.
  */
@@ -24,9 +26,8 @@ public class PreprocessRedirectMapping {
 
     for (int counter = 1; (line = in.readLine()) != null; ++counter) {
       String[] elements = line.split("\t", 3);
-      elements[0] = Normalizer.removeHashFromLink(Normalizer.processTargetLink(elements[0]));
       elements[1] = Normalizer.removeHashFromLink(Normalizer.processTargetLink(elements[1]));
-      writer.print(elements[0] + '\t' + elements[1] + "\n");
+      writer.println(Joiner.on("\t").join(elements[0], elements[1]));
       if (counter % 1000000 == 0) {
       	System.out.println("Processed " + counter + " lines.");
       }

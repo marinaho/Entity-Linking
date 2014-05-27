@@ -10,16 +10,19 @@ import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
 
+import org.apache.commons.io.FilenameUtils;
 import org.xml.sax.SAXException;
 
-/*
+/**
  * Ingests IITB Dataset: test documents and annotations.
  */
 public class IITBDataset {
 
 	private String titlesIndex;
 	private String redirectIndex;
+	private String testFilesFolder;
 	
+	private Set<NameAnnotation> nameAnnotations;
 	private Set<Annotation> annotations;
 	private Set<String> filenames;
 	
@@ -28,10 +31,12 @@ public class IITBDataset {
 		this.redirectIndex = redirectIndex;
 	}
 	
-	public void load(String annotationsFilePath) 
+	public void load(String annotationsFilePath, String testFilesFolder, boolean skipNonCanonical) 
 			throws ParserConfigurationException, SAXException, IOException {
+		this.testFilesFolder = testFilesFolder;
 		SAXParser saxParser = SAXParserFactory.newInstance().newSAXParser();
-		AnnotationsParserHandler handler = new AnnotationsParserHandler(titlesIndex, redirectIndex);
+		AnnotationsParserHandler handler = new AnnotationsParserHandler(
+				titlesIndex, redirectIndex, skipNonCanonical);
 		saxParser.parse(annotationsFilePath, handler);	
 		annotations = handler.getAnnotations();
 		filenames = handler.getFilenames();
@@ -41,8 +46,24 @@ public class IITBDataset {
 		return annotations;
 	}
 	
+	public Set<NameAnnotation> getNameAnnotations() throws IOException {
+		if (nameAnnotations == null && annotations != null) {
+			nameAnnotations = new HashSet<NameAnnotation>();
+			for (Annotation annotation: annotations) {
+				String filePath = FilenameUtils.normalize(testFilesFolder + annotation.getFilename());
+				nameAnnotations.add(annotation.toNameAnnotation(filePath));
+			}
+		}
+		return nameAnnotations;
+	}
+	
 	public Set<String> getFilenames() {
 		return filenames;
+	}
+	
+	
+	public int getNumDocs() {
+		return filenames.size();
 	}
 	
 	public Set<Annotation> getAnnotations(String filename) {
@@ -53,6 +74,23 @@ public class IITBDataset {
 			}
 		}
 		return result;
+	}
+	
+	public Set<NameAnnotation> getNameAnnotations(String filename) throws IOException {
+		if (nameAnnotations == null) {
+			getNameAnnotations();
+		}
+		Set<NameAnnotation> result = new HashSet<NameAnnotation>();
+		for (NameAnnotation nameAnnotation: nameAnnotations) {
+			if (nameAnnotation.getFilename().equals(filename)) {
+				result.add(nameAnnotation);
+			}
+		}
+		return result;
+	}
+	
+	public int getNameAnnotationsCount() {
+		return nameAnnotations.size();
 	}
 	
 	public static String getFileContent(String filePath) throws IOException {
@@ -66,5 +104,10 @@ public class IITBDataset {
 		
 		in.close();
 		return content.toString();
+	}
+	
+	public static String getTokenSpan(String filePath, int offset, int length) throws IOException {
+		String content = getFileContent(filePath);
+		return content.substring(offset, offset + length);
 	}
 }

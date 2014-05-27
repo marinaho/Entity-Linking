@@ -11,12 +11,13 @@ import org.apache.commons.cli.HelpFormatter;
 import org.apache.commons.cli.OptionBuilder;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.io.LongWritable;
+import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapred.JobClient;
 import org.apache.hadoop.mapred.JobConf;
@@ -34,8 +35,18 @@ import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 import org.apache.log4j.Logger;
 
+import com.google.common.base.Joiner;
+
+import data.TFIDFEntry;
 import edu.umd.cloud9.mapred.NoSplitSequenceFileInputFormat;
 
+/**
+ * Constructs an index over the entity tf-idf files computed by 
+ * @See knowledgebase.EntityTFIDFBuilder .
+ * The index memorizes for each entity the file and offset where it occurs.
+ * The tf-idf vector for an entity is read from disk by doing a seek at the corresponding file and
+ * offset.
+ */
 public class EntityTFIDFIndexBuilder extends Configured implements Tool {
 	private static final Logger LOG = Logger.getLogger(EntityTFIDFIndexBuilder.class);
   private static final Random RANDOM = new Random();
@@ -45,10 +56,11 @@ public class EntityTFIDFIndexBuilder extends Configured implements Tool {
   };
 
   public static class Map extends MapReduceBase 
-  		implements MapRunnable<LongWritable, Text, LongWritable, Text> {
-  	private static LongWritable key = new LongWritable();
-  	private static Text inputValue = new Text();
-  	private static Text outputValue = new Text();
+  		implements MapRunnable<IntWritable, TFIDFEntry, IntWritable, Text> {
+  	private static final String SEPARATOR = "\t";
+  	private static final IntWritable key = new IntWritable();
+  	private static final TFIDFEntry inputValue = new TFIDFEntry();
+  	private static final Text outputValue = new Text();
   	private static int fileno;
 
   	public void configure(JobConf job) {
@@ -56,12 +68,15 @@ public class EntityTFIDFIndexBuilder extends Configured implements Tool {
       fileno = Integer.parseInt(file.substring(file.indexOf("part-") + 5));
     }
 
+  	/**
+  	 * Emits key = wikipedia page id; value = (offset fileno) of tf-idf term vector
+  	 */
   	@Override
-  	public void run(RecordReader<LongWritable, Text> input,
-        OutputCollector<LongWritable, Text> output, Reporter reporter) throws IOException {
+  	public void run(RecordReader<IntWritable, TFIDFEntry> input, 
+  			OutputCollector<IntWritable, Text> output, Reporter reporter) throws IOException {
   		long offset = input.getPos();
   		while (input.next(key, inputValue)) {
-  			outputValue.set(offset + "\t" + fileno);
+  			outputValue.set(Joiner.on(SEPARATOR).join(offset, fileno));
   			output.collect(key, outputValue);
   		
   			reporter.incrCounter(Blocks.Total, 1);	
@@ -93,13 +108,13 @@ public class EntityTFIDFIndexBuilder extends Configured implements Tool {
 			return -1;
 		}
 
-		Random random = new Random();
-		String tmp = "tmp-" + this.getClass().getCanonicalName() + "-" + random.nextInt(10000);
+		String defaultOutput = "output-" + this.getClass().getCanonicalName() + "-" + 
+				RANDOM.nextInt(10000);
 
 		task1(
 				getConf(),
 				cmdline.getOptionValue(INPUT_OPTION), 
-				cmdline.getOptionValue(OUTPUT_OPTION, tmp)
+				cmdline.getOptionValue(OUTPUT_OPTION, defaultOutput)
 		);
 
 		return 0;
@@ -122,8 +137,7 @@ public class EntityTFIDFIndexBuilder extends Configured implements Tool {
 		);
 		conf.setJarByClass(EntityTFIDFIndexBuilder.class);
 
-    String tmpPath = "tmp-" + this.getClass().getSimpleName() + "-"
-        + RANDOM.nextInt(10000);
+    String tmpPath = "tmp-" + this.getClass().getSimpleName() + "-" + RANDOM.nextInt(10000);
     
 		SequenceFileInputFormat.addInputPath(conf, new Path(inputPath));
 		TextOutputFormat.setOutputPath(conf, new Path(tmpPath));
@@ -131,10 +145,11 @@ public class EntityTFIDFIndexBuilder extends Configured implements Tool {
 		conf.setInputFormat(NoSplitSequenceFileInputFormat.class);
 		conf.setOutputFormat(TextOutputFormat.class);
 		
-		conf.setMapOutputKeyClass(LongWritable.class);
+		conf.setMapOutputKeyClass(IntWritable.class);
 		conf.setMapOutputValueClass(Text.class);
 		
 		conf.setMapRunnerClass(Map.class);
+		// IdentityReducer will sort the mapper entries by keys = entity ids.
 		conf.setReducerClass(IdentityReducer.class);
 		
 		conf.setNumReduceTasks(1);
@@ -159,7 +174,7 @@ public class EntityTFIDFIndexBuilder extends Configured implements Tool {
     int cnt = 0;
     Text line = new Text();
     while (reader.readLine(line) > 0) {
-      String[] arr = line.toString().split("\t");
+      String[] arr = StringUtils.split(line.toString(), Map.SEPARATOR);
 
       int docno = Integer.parseInt(arr[0]);
       int offset = Integer.parseInt(arr[1]);

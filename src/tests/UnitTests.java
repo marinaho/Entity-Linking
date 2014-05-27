@@ -4,7 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import iitb.Annotation;
 import iitb.IITBDataset;
-import index.EntityLinksIndex;
+import index.AnchorTextIndex;
 import index.EntityTFIDFIndex;
 import index.MentionIndex;
 import index.RedirectPagesIndex;
@@ -21,6 +21,7 @@ import java.util.regex.Pattern;
 
 import javax.xml.parsers.ParserConfigurationException;
 
+import knowledgebase.KeyphrasenessIndexBuilder;
 import md.Mention;
 import md.MentionDetection;
 import md.Ngram;
@@ -34,13 +35,17 @@ import org.xml.sax.SAXException;
 public class UnitTests {
 	private static final int NGRAM_SIZE = 3;
 	private static String annotationsFilePath = "/home/marinah/input/CSAW_Annotations.xml";
+	private static String testFilesFolder = "/home/marinah/input/crawledDocs/";
 
 	public static void main(String args[]) throws Exception {
+//		testExtractContext();
+//		testAnnotationsParsing();
+//		testGatherNgrams();
 //		printMemoryRequirements();
 //		aux();
-//		testMentionDetection();
+		testMentionDetection();
 //		testMentionDetection2();
-		testAnnotationsParsing();
+//		testAnnotationsParsing();
 	}
 
 	public static void aux()  throws IOException {
@@ -56,6 +61,33 @@ public class UnitTests {
 		}
 	}
 	
+	public static void testExtractContext() {
+		Mention.WINDOW_SIZE = 3;
+		Mention mention1 = new Mention("los", 17, 3);
+		Mention mention2 = new Mention("in", 14, 2);
+		Mention mention3 = new Mention("lived", 8, 5);
+		Mention mention4 = new Mention("michael",0, 5);
+		List<Token> tokens = Arrays.asList(
+				new Token("michael", 0), 
+				new Token("lived", 8), 
+				new Token("in", 14),
+				new Token("los", 17)
+		);
+		assertTrue(CollectionUtils.isEqualCollection(
+				mention1.extractContext(tokens), 
+				Arrays.asList("lived", "in", "los")));
+		assertTrue(CollectionUtils.isEqualCollection(
+				mention2.extractContext(tokens), 
+				Arrays.asList("lived", "in", "los")));
+		assertTrue(CollectionUtils.isEqualCollection(
+				mention3.extractContext(tokens), 
+				Arrays.asList("michael", "lived", "in")));
+		assertTrue(CollectionUtils.isEqualCollection(
+				mention4.extractContext(tokens), 
+				Arrays.asList("michael", "lived", "in")));
+		System.out.println("=== testExtractContext passed ===");
+	}
+	
 	public static void testMentionDetection() throws IOException {
 		String text = "our bodies use carbohydrates. glycogen, amino-acids ";
 		MentionDetection md = new MentionDetection(text, null, null, null);
@@ -66,17 +98,15 @@ public class UnitTests {
 					new Token("use", 11),
 					new Token("carbohydrates", 15),
 					new Token(".", 28),
-					new Token("glycogen,", 30),
+					new Token("glycogen", 30),
 					new Token("amino", 40),
+					new Token("-", 45),
 					new Token("acids", 46)
 				);
 		assertTrue(CollectionUtils.isEqualCollection(tokens, expected));
 		System.out.println("=== testTokenizeText passed ===");
 		
 		List<Ngram> ngrams = md.gatherNgrams(tokens, NGRAM_SIZE);
-		for(Ngram ngram: ngrams) {
-			System.out.println(ngram);
-		}
 		List<Ngram> expectedNgrams = Arrays.asList(
 				new Ngram("our", 0, 3),
 				new Ngram("bodies", 4, 6),
@@ -96,9 +126,12 @@ public class UnitTests {
 				new Ngram("amino", 40, 5),
 				new Ngram(". glycogen amino", 28, 17),
 				new Ngram("glycogen amino", 30, 15),
+				new Ngram("-", 45, 1),
+				new Ngram("glycogen amino -", 30, 16),
+				new Ngram("amino -", 40, 6),
 				new Ngram("acids", 46, 5),
-				new Ngram("glycogen amino acids", 30, 21),
-				new Ngram("amino acids", 40, 11)
+				new Ngram("amino - acids", 40, 11),
+				new Ngram("- acids", 45, 6)
 			);
 		assertTrue(CollectionUtils.isEqualCollection(ngrams, expectedNgrams));
 		System.out.println("=== testGatherNgrams passed ===");
@@ -205,7 +238,7 @@ public class UnitTests {
 		int total = Integer.parseInt(m.group(2));
 		System.out.println(linked + " " + total);
 	} 
-	
+
 	public static void testAnnotationsParsing() 
 			throws ParserConfigurationException, SAXException, IOException {
 		IITBDataset dataset = 
@@ -213,7 +246,7 @@ public class UnitTests {
 						"/home/marinah/wikipedia/enwiki-titles.txt",
 						"/home/marinah/wikipedia/enwiki-redirect-normalized.txt"
 			  );
-		dataset.load(annotationsFilePath);
+		dataset.load(annotationsFilePath, testFilesFolder, false);
 		System.out.println("Loaded annotations.");
 		
 		Set<Annotation> annotations = dataset.getAnnotations("yn_08Oct08_file_23");
@@ -240,5 +273,14 @@ public class UnitTests {
 				);
 		assertEquals(annotations, expected);
 		System.out.println("=== testAnnotationsParsing passed ===");
+	}
+	
+	public static void testGatherNgrams() throws IOException {
+		AnchorTextIndex anchorTextSet = AnchorTextIndex.load(
+				"/home/marinah/wikipedia/mention-entity-keyphraseness.txt");
+		String tokens[] = new String[] {"united", "states", "elections", "in", "new", "york"};
+		Set<String> ngrams = KeyphrasenessIndexBuilder.Map.gatherNgramMentions(
+				tokens, 8, anchorTextSet);
+		System.out.println(ngrams);
 	}
 }

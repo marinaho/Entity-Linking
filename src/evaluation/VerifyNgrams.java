@@ -15,7 +15,7 @@ import md.Token;
 import org.apache.commons.io.FilenameUtils;
 import org.xml.sax.SAXException;
 
-/*
+/**
  * Check which IITB annotations do not occur in the tokenized ngrams of the inputs.
  * This should identify differences in tokenizations.
  * The candidate entities are not computed and compared at this point.
@@ -30,7 +30,7 @@ public class VerifyNgrams {
 	public static void main(String args[]) 
 			throws ParserConfigurationException, SAXException, IOException {
 		IITBDataset iitb = new IITBDataset(titlesIndexPath, redirectsIndexPath);
-		iitb.load(annotationsFilePath);
+		iitb.load(annotationsFilePath, testFilesFolder, false);
 		
 		List<Annotation> ngramsFound = new ArrayList<Annotation>();
 		for (String filename: iitb.getFilenames()) {

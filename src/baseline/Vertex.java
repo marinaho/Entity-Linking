@@ -1,5 +1,7 @@
 package baseline;
 
+import md.Mention;
+
 /*
  * Vertex of the Referent Graph for Entity Linking.
  * Represents a mention or an entity.
@@ -7,38 +9,37 @@ package baseline;
  * Mentions have negative ids. An entity id is it's integer mapping. See @index.TitlesIndex .
  */
 public class Vertex {
-	private static int IS_MENTION = 2;
-	
+	public static final int NOT_SET = -1;
+	private int entity;
+	private Mention mention;
 	private double prior;
-	private int entityid;
-	private int mentionid;
 	
-	public Vertex(int mentionid, double prior) {
-		this.mentionid = mentionid;
+	public Vertex(Mention mention, Double prior) {
+		this.mention = mention;
 		this.prior = prior;
-		this.entityid = IS_MENTION; 
+		this.entity = NOT_SET;
 	}
 	
-	public Vertex(int mentionid, int entityid, double prior) {
-		this.mentionid = mentionid;
-		this.entityid = entityid;
-		this.prior = prior; 
+	public Vertex(Integer entity, Mention mention) {
+		this.entity = entity;
+		this.mention = mention;
+		this.prior = 0; 
 	}
 	
 	public double getPrior() {
 		return prior;
 	}
 	
-	public int getMentionID() {
-		return mentionid;
+	public Mention getMention() {
+		return mention;
 	}
 	
-	public int getEntityID() {
-		return entityid;
+	public int getEntity() {
+		return entity;
 	}
 	
 	public boolean isMention() {
-		return entityid == IS_MENTION;
+		return entity == NOT_SET;
 	}
 	
 	@Override
@@ -52,11 +53,11 @@ public class Vertex {
 		}
 		
 		Vertex other = (Vertex) object;
-		return mentionid == other.mentionid && entityid == other.entityid;
+		return mention.equals(other.getMention()) && entity == other.getEntity();
 	}
 	
 	@Override
 	public int hashCode() {
-		return mentionid + entityid;
+		return mention.hashCode() + entity;
 	}
 }

@@ -14,9 +14,7 @@ import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 
 /**
- * TO DO: add description
- *
- * @author Marina Horlescu
+ * TO DO: Rewrite to run all steps of processing Wikipedia. NOT TESTED YET
  */
 public class WikiPipeline extends Configured implements Tool {
 	

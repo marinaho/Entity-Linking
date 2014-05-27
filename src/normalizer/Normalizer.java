@@ -13,6 +13,8 @@ import org.apache.commons.lang3.StringUtils;
 import com.google.common.base.Joiner;
 
 public class Normalizer {	
+	public static String WHITESPACES = " \t\n\r\f";
+	
 	public static String removeTags(String input, List<String> tags) {
 		for (String tag: tags) {
 			input = input.replaceAll("<" + tag + ">([^<]*)</" + tag + ">", "$1");

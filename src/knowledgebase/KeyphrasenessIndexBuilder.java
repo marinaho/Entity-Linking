@@ -45,7 +45,7 @@ import edu.umd.cloud9.collection.wikipedia.WikipediaPage;
 import edu.umd.cloud9.collection.wikipedia.WikipediaPage.Link;
 import edu.umd.cloud9.io.pair.PairOfInts;
 
-/*
+/**
  * Extracts keyphraseness for anchor text mentions.
  * Output format: mention \t #documents with linked mention \t #documents with mention.
  */
@@ -57,7 +57,7 @@ public class KeyphrasenessIndexBuilder extends Configured implements Tool {
 	private static final String OUTPUT_OPTION = "output";
 	private static final String ANCHOR_TEXT_INDEX_OPTION = "anchor_text";
 
-	private static final int DEFAULT_NUM_REDUCERS = 10;
+	private static final int DEFAULT_NUM_REDUCERS = 1;
 	private static final String DEFAULT_ANCHOR_TEXT_FILE = "/mention-entity-index.txt";
 	
 	static final String ANCHOR_TEXT_INDEX_SYMLINK = "anchor_file";
@@ -66,21 +66,21 @@ public class KeyphrasenessIndexBuilder extends Configured implements Tool {
 
 	public static class Map extends MapReduceBase implements
 			Mapper<IntWritable, WikipediaPage, Text, PairOfInts> {
-		private static Text outputKey = new Text();
-		private static PairOfInts outputValue = new PairOfInts();
-		private static AnchorTextIndex anchorTextSet;
+		private static final Text outputKey = new Text();
+		private static final PairOfInts outputValue = new PairOfInts();
+		private static AnchorTextIndex anchorTextIndex;
 
 		@Override
 		public void configure(JobConf job) {
 			String anchorTextPath = job.get(ANCHOR_TEXT_INDEX_SYMLINK);
 			try {
-				anchorTextSet = AnchorTextIndex.load(anchorTextPath);
+				anchorTextIndex = AnchorTextIndex.load(anchorTextPath);
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
 		}
 
-		/*
+		/**
 		 *  Emits:	key = mention, value = 0, if mention is not linked
 		 *  				key = mention, value = 1, if mention is linked
 		 */
@@ -92,21 +92,44 @@ public class KeyphrasenessIndexBuilder extends Configured implements Tool {
 			}
 			reporter.incrCounter(PageTypes.TOTAL, 1);
 			String normalizedContent = Normalizer.normalize(page.getContent());
-			String tokens[] = StringUtils.split(normalizedContent, " \t\f\n\r");
-			Set<String> ngramsSet = new HashSet<String>();
+			String tokens[] = StringUtils.split(normalizedContent, Normalizer.WHITESPACES);
+			Set<String> ngramsSet = gatherNgramMentions(tokens, NGRAM_SIZE, anchorTextIndex);
 			
-			StringBuilder ngrams[] = new StringBuilder[NGRAM_SIZE];
+			HashSet<String> linkedNgrams = new HashSet<String>();
+			for (Link link : page.extractLinks()) {	
+				String normalizedAnchorText = Normalizer.processAnchorText(link.getAnchorText());
+				if (anchorTextIndex.contains(normalizedAnchorText)) {
+					linkedNgrams.add(normalizedAnchorText);
+				}
+			}
+			
+			for (String linkedNgram: linkedNgrams) {
+				outputKey.set(linkedNgram);
+				outputValue.set(1, 1);
+				output.collect(outputKey, outputValue);
+				ngramsSet.remove(linkedNgram);
+			}
+			
+			for(String mention: ngramsSet) {
+				outputKey.set(mention);
+				outputValue.set(0, 1);
+				output.collect(outputKey, outputValue);
+			}
+		}
+		
+		public static Set<String> gatherNgramMentions(String[] tokens, int size, 
+				AnchorTextIndex anchorTextSet) {
+			Set<String> ngramsSet = new HashSet<String>();
+
+			StringBuilder ngrams[] = new StringBuilder[size];
 			// Create ngrams with tokens from positions 0 ... NGRAM_SIZE-1
 			int i;
-			for (i = 0; i < NGRAM_SIZE && i < tokens.length; ++i) {
+			for (i = 0; i < size && i < tokens.length; ++i) {
 				ngrams[i] = new StringBuilder("");
 
 				// Create ngrams ending in ith token.
 				for(int j = 0; j <= i; ++j) {
-					if (!ngrams[j].toString().equals("")) {
-						ngrams[j].append(" ");
-					}
-					ngrams[j].append(tokens[i]);
+					ngrams[j].append((ngrams[j].length() > 0 ? " " : "") + tokens[i]);
 					if (anchorTextSet.contains(ngrams[j].toString())) {
 				  	// Add ngram token[j], token[j+1], ... token[i]
 						ngramsSet.add(ngrams[j].toString());
@@ -116,42 +139,30 @@ public class KeyphrasenessIndexBuilder extends Configured implements Tool {
 			
 			int start = 0;
 			for (;i < tokens.length; ++i) {
-				String next = tokens[i];
-				ngrams[start] = new StringBuilder(next);
-				if (anchorTextSet.contains(next)) {
-					ngramsSet.add(next);
+				ngrams[start] = new StringBuilder(tokens[i]);
+				if (anchorTextSet.contains(tokens[i])) {
+					ngramsSet.add(tokens[i]);
 				}
 				
-				for (int j = (start + 1) % NGRAM_SIZE; j != start; j = (j + 1) % NGRAM_SIZE) {
-					ngrams[j].append(" " + next);
+				for (int j = (start + 1) % size; j != start; j = (j + 1) % size) {
+					ngrams[j].append(" " + tokens[i]);
 					if (anchorTextSet.contains(ngrams[j].toString())) {
 						ngramsSet.add(ngrams[j].toString());
 					}
 				}
-				start = (start + 1) % NGRAM_SIZE;
+				start = (start + 1) % size;
 			}
-			
-			for (Link link : page.extractLinks()) {	
-				String normalizedAnchorText = Normalizer.processAnchorText(link.getAnchorText());
-				if (anchorTextSet.contains(normalizedAnchorText)) {
-					outputKey.set(normalizedAnchorText);
-					outputValue.set(1, 1);
-					output.collect(outputKey, outputValue);
-					ngramsSet.remove(normalizedAnchorText);
-				}
-			}
-			
-			for(String mention: ngramsSet) {
-				outputKey.set(mention);
-				outputValue.set(0, 1);
-				output.collect(outputKey, outputValue);
-			}
+			return ngramsSet;
 		}
 	}
 	
 	public static class Reduce extends MapReduceBase
 			implements Reducer<Text, PairOfInts, Text, PairOfInts> {
-		PairOfInts outputValue = new PairOfInts();
+		private static final PairOfInts outputValue = new PairOfInts();
+		
+		/**
+		 * Emits: key = mention; value = (#docs that link the mention, #docs that contain the mention)
+		 */
 		@Override
 		public void reduce(Text key, Iterator<PairOfInts> values,
 				OutputCollector<Text, PairOfInts> output, Reporter reporter) throws IOException {		
