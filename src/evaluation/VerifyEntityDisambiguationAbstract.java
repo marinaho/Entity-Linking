@@ -33,6 +33,7 @@ import iitb.NameAnnotation;
 import index.CandidatesIndex;
 import index.EntityLinksIndex;
 import index.EntityTFIDFIndex;
+import index.LinksIndex;
 import index.TermDocumentFrequencyIndex;
 import index.TitleIDsIndex;
 
@@ -49,13 +50,15 @@ public abstract class VerifyEntityDisambiguationAbstract {
 			"/mnt/local/marinah/wikipedia/tf-idf-entity-index.txt";
 	public static final String redirectsFilePath = 
 			"/mnt/local/marinah/wikipedia/enwiki-redirect-normalized.txt";
+	public static final String entityLinksFrequencyIndexPath = 
+			"/mnt/local/marinah/wikipedia/entityLinksIndex.txt";
 	public static final String entityLinksIndexPath = 
 			"/mnt/local/marinah/wikipedia/entity-entity-index.txt";
 	
 	public IITBDataset iitb;
 	public EntityTFIDFIndex entityTFIDFIndex;
 	public TermDocumentFrequencyIndex dfIndex;
-	public EntityLinksIndex entityLinksIndex;
+	public LinksIndex entityLinksIndex;
 	public TitleIDsIndex titleIdsIndex;
 	
 	public HashSet<String> missing;
@@ -88,9 +91,6 @@ public abstract class VerifyEntityDisambiguationAbstract {
 		
 		dfIndex = TermDocumentFrequencyIndex.load(termDFIndexPath);
 		System.out.println("Loaded term document frequency index:" + termDFIndexPath);
-
-		entityLinksIndex = EntityLinksIndex.load(entityLinksIndexPath);
-		System.out.println("Loaded entity links index:" + entityLinksIndexPath);
 		
 		titleIdsIndex = TitleIDsIndex.load(titlesFilePath); 
 		System.out.println("Loaded title ids index:" + titlesFilePath);

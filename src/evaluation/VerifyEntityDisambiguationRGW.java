@@ -1,6 +1,7 @@
 package evaluation;
 
 import iitb.NameAnnotation;
+import index.EntityLinksIndex;
 import index.MentionIndex;
 import index.TitleIDsIndex;
 
@@ -31,6 +32,9 @@ public class VerifyEntityDisambiguationRGW extends VerifyEntityDisambiguationAbs
 		
 		MentionIndex mentionIndex = MentionIndex.load(mentionIndexPath);
 		System.out.println("Loaded mention index:" + mentionIndexPath);
+		
+		System.out.println("Loading entity links index:" + entityLinksIndexPath);
+		EntityLinksIndex entityLinksIndex = EntityLinksIndex.load(entityLinksIndexPath);
 		
 		loadIndices();
 		

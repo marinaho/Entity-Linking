@@ -1,10 +1,11 @@
 package evaluation;
 
 import iitb.NameAnnotation;
+import index.EntityLinksFrequencyIndex;
+import index.EntityLinksIndex;
 import index.MentionEntitiesFrequencyIndex;
 
 import java.io.IOException;
-import java.io.PrintWriter;
 import java.util.List;
 import java.util.Set;
 
@@ -27,8 +28,7 @@ public class VerifyEntityDisambiguationLoopy extends VerifyEntityDisambiguationA
 	}
 	
 	public void run() throws ParserConfigurationException, SAXException, IOException {
-//		PrintWriter out = new PrintWriter("debug");
-		System.out.println("VerifyEntityDisambiguation Loopy Belief Propagation");
+		System.out.println("VerifyEntityDisambiguation Loopy Belief Propagation BLA");
 		
 		configureLogging();
 		
@@ -36,40 +36,75 @@ public class VerifyEntityDisambiguationLoopy extends VerifyEntityDisambiguationA
 		MentionEntitiesFrequencyIndex mentionIndex = 
 				MentionEntitiesFrequencyIndex.load(mentionFreqIndexPath);
 		
+		System.out.println("Loading entity links index:" + entityLinksIndexPath);
+		entityLinksIndex = EntityLinksIndex.load(entityLinksIndexPath);
+		
 		loadIndices();
 
-		int total = 0;
-		double averagePrecision = 0;
-		double averageRecall = 0;
-		for (String filename: iitb.getFilenames()) {
-	//	String filename = "ganeshTestDoc.txt"; {
-			System.out.println("Solving for document:" + filename + " Number:" + (++total));
-			List<Mention> groundTruthMentions = getGroundTruthNameAnnotations(filename, mentionIndex);
-			ScorerFull scorer = new ScorerFull(groundTruthMentions, entityLinksIndex, mentionIndex);
-//			ScorerMaxEnt scorer = new ScorerMaxEnt(groundTruthMentions, entityLinksIndex);
-//			ScorerBasic scorer = new ScorerBasic(groundTruthMentions, entityLinksIndex);
-			scorer.setTitlesIdIndex(titleIdsIndex);
-			LoopyBeliefPropagation lbp = new LoopyBeliefPropagation(groundTruthMentions, iterations, 
-					scorer);
-			lbp.setTitlesIdIndex(titleIdsIndex);
-			lbp.solve();
-			Set<NameAnnotation> solution = lbp.getSolutionNameAnnotations(filename);
-			
-			Verifier<NameAnnotation> verifier = verifyNameAnnotations(solution);
-			for (NameAnnotation annotation: verifier.getWrongAnnotations()) {
+		Double betas[] = new Double[]{0.000001, 0.0001, 0.01, 0.1, 1.0, 10.0, 100.0, 1000.0};
+		
+		double globalBestBeta = 0, globalBestPrecision = 0, globalBestRecall = 0, globalBestFscore = 0;
+		int globalBestThreshold = -1;
+		System.out.println("Scorer: " + ScorerFull.class.getName());
+		// for (double beta: betas) {
+		for (double beta = 0.5; beta < 1.6; beta += 0.1) {
+			double bestFscore = 0, bestPrecision = 0, bestRecall = 0;
+			int bestThreshold = -1;
+			// for (int threshold = 0; threshold <= 5; ++threshold) {
+				int total = 0;
+				double averagePrecision = 0;
+				double averageRecall = 0;
+				for (String filename: iitb.getFilenames()) {
+					System.out.println("Solving for document:" + filename + " Number:" + (++total));
+					List<Mention> groundTruthMentions = getGroundTruthNameAnnotations(filename, mentionIndex);
+					// ScorerBasic scorer = new ScorerBasic(groundTruthMentions, entityLinksIndex);
+					ScorerFull scorer = new ScorerFull(groundTruthMentions, entityLinksIndex, mentionIndex);
+					// ScorerMaxEnt scorer = new ScorerMaxEnt(groundTruthMentions, entityLinksIndex);
+					// scorer.setThreshold(threshold);
+					scorer.setBeta(beta);
+					scorer.setTitlesIdIndex(titleIdsIndex);
+					LoopyBeliefPropagation lbp = new LoopyBeliefPropagation(groundTruthMentions, iterations, 
+							scorer);
+					lbp.setTitlesIdIndex(titleIdsIndex);
+					lbp.solve();
+					Set<NameAnnotation> solution = lbp.getSolutionNameAnnotations(filename);
+
+					Verifier<NameAnnotation> verifier = verifyNameAnnotations(solution);
+
+					averagePrecision += verifier.getPrecision();
+					averageRecall += verifier.getRecall();
+				}
+
+				averagePrecision /= iitb.getNumDocs();
+				averageRecall /= iitb.getNumDocs();
+
+				System.out.println("=============== RESULTS =================");
+				// System.out.println("Threshold:" + threshold + " Beta:" + beta);
+				// System.out.println("Threshold:" + threshold);
+				System.out.println("Beta:" + beta);
+				System.out.println("Average Precision: " + averagePrecision);
+				System.out.println("Average Recall: " + averageRecall);
+				System.out.println("Maximum achievable recall " + getMaximumAchievableRecall());
 				
+				double fscore = (averagePrecision + averageRecall) / 2;
+				if (fscore > bestFscore) {
+					bestFscore = fscore;
+				//  bestThreshold = threshold;
+					bestPrecision = averagePrecision;
+					bestRecall = averageRecall;
+				}
+			// }
+			System.out.println("Best beta:" + beta + " Threshold:" + bestThreshold + " Precision: " +
+					bestPrecision + " Recall:" + bestRecall);
+			if (bestFscore > globalBestFscore) {
+				globalBestFscore = bestFscore;
+				globalBestBeta = beta;
+				globalBestThreshold = bestThreshold;
+				globalBestPrecision = bestPrecision;
+				globalBestRecall = bestRecall;
 			}
-
-			averagePrecision += verifier.getPrecision();
-			averageRecall += verifier.getRecall();
 		}
-	
-		averagePrecision /= iitb.getNumDocs();
-		averageRecall /= iitb.getNumDocs();
-
-		System.out.println("=============== RESULTS =================");
-		System.out.println("Average Precision: " + averagePrecision);
-		System.out.println("Average Recall: " + averageRecall);
-		System.out.println("Maximum achievable recall " + getMaximumAchievableRecall());
+		System.out.println("Global best beta:" + globalBestBeta + " Threshold:" + globalBestThreshold + 
+				" Precision: " + globalBestPrecision + " Recall:" + globalBestRecall);
 	}
 }

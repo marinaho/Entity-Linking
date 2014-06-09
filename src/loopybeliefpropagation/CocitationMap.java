@@ -1,6 +1,6 @@
 package loopybeliefpropagation;
 
-import index.EntityLinksIndex;
+import index.LinksIndex;
 import index.TitleIDsIndex;
 
 import java.util.HashMap;
@@ -12,14 +12,14 @@ import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
 
 import edu.umd.cloud9.io.pair.PairOfInts;
-
+ 
 public class CocitationMap extends HashMap<PairOfInts, Integer>{
 	private static final long serialVersionUID = -8757131927926629911L;
 
 	private static final Logger LOG = Logger.getLogger(CocitationMap.class);
 
 	private TitleIDsIndex titleIdsIndex;
-	public CocitationMap(List<Mention> mentions, EntityLinksIndex index) {
+	public CocitationMap(List<Mention> mentions, LinksIndex index) {
 		super();
 		LOG.setLevel(Level.INFO);
 		for (int i = 0; i < mentions.size(); ++i) {
@@ -29,6 +29,9 @@ public class CocitationMap extends HashMap<PairOfInts, Integer>{
 				for (int candidate1: mention1.getCandidateEntities()) {
 					for (int candidate2: mention2.getCandidateEntities()) {
 						int cocitation = index.getCocitation(candidate1, candidate2);
+						if (cocitation == 0) {
+							continue;
+						}
 						PairOfInts pair = new PairOfInts(
 								Math.min(candidate1, candidate2), 
 								Math.max(candidate1, candidate2)

@@ -12,7 +12,7 @@ import knowledgebase.WikiUtils;
  * Can be used to compute semantic relatedness between two entities.
  * The file loaded should be produced by @see knowledgebase.EntityMentionIndexBuilder .
  */
-public class EntityLinksIndex extends HashMap<Integer, Integer[]> {
+public class EntityLinksIndex extends HashMap<Integer, Integer[]> implements LinksIndex {
 	// Don't change separator. 
 	public static final String SEPARATOR = "\t";
 	private static final long serialVersionUID = 2718316266900207592L;

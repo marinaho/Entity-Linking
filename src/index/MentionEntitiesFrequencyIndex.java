@@ -68,6 +68,10 @@ public class MentionEntitiesFrequencyIndex extends HashMap<String, NameEntry>
 		return get(name).getCandidateProbability(candidate);
 	}
 	
+	public int getCandidateFrequency(String name, Integer candidate) {
+		return get(name).getCandidateFrequency(candidate);
+	}
+	
 	public Integer getMostFrequentEntity(String name) {
 		return get(name).getMostFrequentEntity();
 	}

@@ -1,7 +1,9 @@
 package evaluation;
 
 import iitb.NameAnnotation;
+import index.EntityLinksIndex;
 import index.MentionEntitiesFrequencyIndex;
+
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
@@ -28,6 +30,9 @@ public class VerifyEntityDisambiguationFreq extends VerifyEntityDisambiguationAb
 		MentionEntitiesFrequencyIndex mentionIndex = 
 				MentionEntitiesFrequencyIndex.load(mentionIndexPath);
 		System.out.println("Loaded mention index:" + mentionIndexPath);
+		
+		System.out.println("Loading entity links index:" + entityLinksIndexPath);
+		entityLinksIndex = EntityLinksIndex.load(entityLinksIndexPath);
 		
 		loadIndices();
 		

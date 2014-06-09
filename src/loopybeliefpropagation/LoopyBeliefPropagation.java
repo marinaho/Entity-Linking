@@ -32,7 +32,6 @@ public class LoopyBeliefPropagation {
 		this.mentions = mentions;
 		this.iterations = iterations;
 		this.scorer = scorer;
-		System.out.println("Scorer: " + scorer.getClass().getName());
 	}
 	
 	public void solve() {
